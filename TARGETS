@@ -1,0 +1,65 @@
+cpp_library(
+    name = "pushmi_core",
+    srcs = [],
+    headers = [
+        "include/boosters.h",
+        "include/concepts.h",
+        "include/executor.h",
+        "include/extension_points.h",
+        "include/flowsingle.h",
+        "include/flowsingledeferred.h",
+        "include/none.h",
+        "include/piping.h",
+        "include/single.h",
+        "include/singledeferred.h",
+        "include/traits.h",
+        "include/trampoline.h",
+    ],
+    deps = [
+        "//folly:function",
+        "//folly:optional",
+        "//folly:poly",
+        "//folly/executors:cpu_thread_pool_executor",
+        "//folly/executors:sequenced_executor",
+        "//folly/executors:serial_executor",
+        "//folly/futures:futures",
+        "//folly/io/async:async",
+        "//folly/poly:basic_interfaces",
+    ],
+    external_deps = [
+    ],
+)
+
+cpp_library(
+    name = "pushmi_operators",
+    srcs = [],
+    headers = [
+        "include/o/empty.h",
+        "include/o/just.h",
+        "include/o/submit.h",
+        "include/o/on.h",
+        "include/o/via.h",
+    ],
+    deps = [
+        ":pushmi_core",
+        "//folly:function",
+        "//folly:poly",
+        "//folly/futures:futures",
+        "//folly/io/async:async",
+        "//folly/poly:basic_interfaces",
+    ],
+    external_deps = [
+    ],
+)
+
+cpp_unittest(
+    name = "pushmi_test",
+    srcs = [
+        "PushmiTest.cpp",
+    ],
+    deps = [
+        ":pushmi_core",
+        ":pushmi_operators",
+        "//folly:conv",
+    ],
+)
