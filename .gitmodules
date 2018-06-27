@@ -7,3 +7,9 @@
 [submodule "external/Catch2"]
 	path = external/Catch2
 	url = https://github.com/catchorg/Catch2.git
+[submodule "external/executors-impl"]
+	path = external/executors-impl
+	url = https://github.com/executors/executors-impl.git
+[submodule "external/futures-impl"]
+	path = external/futures-impl
+	url = https://github.com/executors/futures-impl.git
