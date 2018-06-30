@@ -1,6 +1,3 @@
-[submodule "external/meta"]
-	path = external/meta
-	url = https://github.com/ericniebler/meta.git
 [submodule "external/networking-ts-impl"]
 	path = external/networking-ts-impl
 	url = https://github.com/chriskohlhoff/networking-ts-impl.git
