@@ -11,19 +11,20 @@
 namespace pushmi {
 namespace detail {
 
-  template<class ValueType, class ExecutorType>
+  template<class ValueType_, class ExecutorType_>
   struct AsyncToken {
   public:
+    using ValueType = ValueType_;
+    using ExecutorType = ExecutorType_;
     struct Data {
-      Data(ValueType v) : v_(std::move(v)) {}
       ValueType v_;
       std::condition_variable cv_;
       std::mutex cvm_;
       bool flag_ = false;
     };
 
-    AsyncToken(ExecutorType e, ValueType v) :
-      e_{std::move(e)}, dataPtr_{std::make_shared<Data>(std::move(v))} {}
+    AsyncToken(ExecutorType e) :
+      e_{std::move(e)}, dataPtr_{std::make_shared<Data>()} {}
 
     ExecutorType e_;
     std::shared_ptr<Data> dataPtr_;
@@ -68,7 +69,8 @@ namespace detail {
                         // Token hard coded for this executor type at the moment
                         auto token = AsyncToken<
                             std::decay_t<decltype(v)>, std::decay_t<decltype(exec)>>{
-                          exec, std::forward<decltype(v)>(v)};
+                          exec};
+                        token.dataPtr_->v_ = std::forward<decltype(v)>(v);
                         token.dataPtr_->flag_ = true;
                         ::pushmi::set_value(out, std::move(token));
                       }
@@ -178,10 +180,93 @@ namespace detail {
     }
   };
 
+
+  // extracted this to workaround cuda compiler failure to compute the static_asserts in the nested lambda context
+  template<class F>
+  struct async_transform_on_value {
+    F f_;
+    async_transform_on_value() = default;
+    constexpr explicit async_transform_on_value(F f)
+      : f_(std::move(f)) {}
+    template<class Out, class V>
+    auto operator()(Out& out, V&& inputToken) {
+      using Result = decltype(f_(std::declval<typename V::ValueType>()));
+      using Executor = typename V::ExecutorType;
+      static_assert(::pushmi::SemiMovable<AsyncToken<Result, Executor>>,
+        "none of the functions supplied to transform can convert this value");
+      static_assert(::pushmi::SingleReceiver<Out, AsyncToken<Result, Executor>>,
+        "Result of value transform cannot be delivered to Out");
+
+      AsyncToken<Result, Executor> outputToken{inputToken.e_};
+      std::thread t([
+         inputToken,
+         outputToken,
+         out,
+         func = this->f_]() mutable {
+        std::unique_lock<std::mutex> inlk(inputToken.dataPtr_->cvm_);
+        // Wait for input value
+        if(!inputToken.dataPtr_->flag_) {
+          inputToken.dataPtr_->cv_.wait(
+            inlk, [&](){return inputToken.dataPtr_->flag_;});
+        }
+        // Compute
+        auto result = func(inputToken.dataPtr_->v_);
+        // Move output and notify
+        std::unique_lock<std::mutex> outlk(outputToken.dataPtr_->cvm_);
+        outputToken.dataPtr_->v_ = std::move(result);
+        outputToken.dataPtr_->flag_ = true;
+        outputToken.dataPtr_->cv_.notify_all();
+      });
+
+      t.detach();
+      ::pushmi::set_value(out, outputToken);
+    }
+  };
+
+  struct async_transform_fn {
+    template <class... FN>
+    auto operator()(FN... fn) const;
+  };
+
+  template <class... FN>
+  auto async_transform_fn::operator()(FN... fn) const {
+    auto f = ::pushmi::overload(std::move(fn)...);
+    return ::pushmi::constrain(::pushmi::lazy::Sender<::pushmi::_1>, [f = std::move(f)](auto in) {
+      using In = decltype(in);
+      // copy 'f' to allow multiple calls to connect to multiple 'in'
+      using F = decltype(f);
+      return ::pushmi::detail::deferred_from<In, ::pushmi::single<>>(
+        std::move(in),
+        ::pushmi::detail::submit_transform_out<In>(
+          ::pushmi::constrain(::pushmi::lazy::Receiver<::pushmi::_1>, [f](auto out) {
+            using Out = decltype(out);
+            return ::pushmi::detail::out_from_fn<In>()(
+              std::move(out),
+              // copy 'f' to allow multiple calls to submit
+              ::pushmi::on_value(
+                async_transform_on_value<F>(f)
+                // [f](Out& out, auto&& v) {
+                //   using V = decltype(v);
+                //   using Result = decltype(f((V&&) v));
+                //   static_assert(::pushmi::SemiMovable<Result>,
+                //     "none of the functions supplied to transform can convert this value");
+                //   static_assert(::pushmi::SingleReceiver<Out, Result>,
+                //     "Result of value transform cannot be delivered to Out");
+                //   ::pushmi::set_value(out, f((V&&) v));
+                // }
+              )
+            );
+          })
+        )
+      );
+    });
+  }
+
 } // namespace detail
 
 namespace operators {
 PUSHMI_INLINE_VAR constexpr detail::async_join_fn async_join{};
 PUSHMI_INLINE_VAR constexpr detail::async_fork_fn async_fork{};
+PUSHMI_INLINE_VAR constexpr detail::async_transform_fn async_transform{};
 } // namespace operators
 } // namespace pushmi
