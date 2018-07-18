@@ -30,6 +30,7 @@ public:
     ValueType v_;
     std::condition_variable cv_;
     std::mutex cvm_;
+    bool flag_ = false;
   };
 
   AsyncToken(ExecutorType e, ValueType v) :
@@ -82,7 +83,7 @@ namespace detail {
                         auto token = AsyncToken<
                             std::decay_t<decltype(v)>, std::decay_t<decltype(exec)>>{
                           exec, std::forward<decltype(v)>(v)};
-                        token.dataPtr_->cv_.notify_all();
+                        token.dataPtr_->flag_ = true;
                         ::pushmi::set_value(out, std::move(token));
                       }
                     )
@@ -166,8 +167,10 @@ namespace detail {
                            asyncToken,
                            out]() mutable {
                           std::unique_lock<std::mutex> lk(asyncToken.dataPtr_->cvm_);
-                          // TODO: Currently this never wakes up. Fix to work properly.
-                          //asyncToken.dataPtr_->cv_.wait(lk);
+                          if(!asyncToken.dataPtr_->flag_) {
+                            asyncToken.dataPtr_->cv_.wait(
+                              lk, [&](){return asyncToken.dataPtr_->flag_;});
+                          }
                           ::pushmi::submit(
                             exec,
                             ::pushmi::now(exec),
