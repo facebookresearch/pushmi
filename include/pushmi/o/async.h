@@ -6,13 +6,14 @@
 
 #include "../piping.h"
 #include "../executor.h"
+#include "../new_thread.h"
 #include "extension_operators.h"
 
 namespace pushmi {
 namespace detail {
 
   template<class ValueType_, class ExecutorType_>
-  struct AsyncToken {
+  struct NewThreadAsyncToken {
   public:
     using ValueType = ValueType_;
     using ExecutorType = ExecutorType_;
@@ -23,15 +24,29 @@ namespace detail {
       bool flag_ = false;
     };
 
-    AsyncToken(ExecutorType e) :
+    NewThreadAsyncToken(ExecutorType e) :
       e_{std::move(e)}, dataPtr_{std::make_shared<Data>()} {}
 
     ExecutorType e_;
     std::shared_ptr<Data> dataPtr_;
   };
 
+  template<class ValueType_, class ExecutorType_>
+  struct InlineAsyncToken {
+  public:
+    using ValueType = ValueType_;
+    using ExecutorType = ExecutorType_;
+
+    InlineAsyncToken(ExecutorType e) :
+      e_{std::move(e)} {}
+
+    ExecutorType e_;
+    ValueType value_;
+  };
+
   template<class Executor, class Out>
   struct async_fork_fn_data : public Out {
+    using out_t = Out;
     Executor exec;
 
     async_fork_fn_data(Out out, Executor exec) :
@@ -42,6 +57,40 @@ namespace detail {
   auto make_async_fork_fn_data(Out out, Executor ex) -> async_fork_fn_data<Executor, Out> {
     return {std::move(out), std::move(ex)};
   }
+
+  // Generic version
+  template<class Executor, class Data, class Value>
+  struct async_fork_on_value_impl {
+    void operator()(Executor exec, Data& data, Value&& value) {
+      static_assert(std::is_same<Executor, Executor>::value, "Inline not yet implemented for fork");
+    }
+  };
+
+
+  // Customisation for NewThreadAsyncToken
+  template<class Data, class Value>
+  struct async_fork_on_value_impl<decltype(new_thread()), Data, Value> {
+    void operator()(decltype(new_thread()) exec, Data& data, Value&& value) {
+
+      ::pushmi::submit(
+        exec,
+        ::pushmi::now(exec),
+        ::pushmi::make_single(
+          [value = (Value&&)value,
+           out = std::move(static_cast<typename std::decay_t<Data>::out_t&>(data)),
+           exec](auto) mutable {
+            // Token hard coded for this executor type at the moment
+            auto token = NewThreadAsyncToken<
+                std::decay_t<decltype(value)>, std::decay_t<decltype(exec)>>{
+              exec};
+            token.dataPtr_->v_ = std::forward<Value>(value);
+            token.dataPtr_->flag_ = true;
+            ::pushmi::set_value(out, std::move(token));
+          }
+        )
+      );
+    }
+  };
 
   struct async_fork_fn {
     PUSHMI_TEMPLATE(class ExecutorFactory)
@@ -61,21 +110,8 @@ namespace detail {
                 ::pushmi::on_value([](auto& data, auto&& v) {
                   using V = decltype(v);
                   auto exec = data.exec;
-                  ::pushmi::submit(
-                    exec,
-                    ::pushmi::now(exec),
-                    ::pushmi::make_single(
-                      [v = (V&&)v, out = std::move(static_cast<Out&>(data)), exec](auto) mutable {
-                        // Token hard coded for this executor type at the moment
-                        auto token = AsyncToken<
-                            std::decay_t<decltype(v)>, std::decay_t<decltype(exec)>>{
-                          exec};
-                        token.dataPtr_->v_ = std::forward<decltype(v)>(v);
-                        token.dataPtr_->flag_ = true;
-                        ::pushmi::set_value(out, std::move(token));
-                      }
-                    )
-                  );
+                  async_fork_on_value_impl<decltype(exec), decltype(data), V>{}(
+                    exec, data, std::forward<decltype(v)>(v));
                 }),
                 ::pushmi::on_error([](auto& data, auto e) noexcept {
                   ::pushmi::submit(
@@ -109,6 +145,7 @@ namespace detail {
 
   template<class Out>
   struct async_join_fn_data : public Out {
+    using out_t = Out;
     async_join_fn_data(Out out) :
       Out(std::move(out)) {}
   };
@@ -117,6 +154,55 @@ namespace detail {
   auto make_async_join_fn_data(Out out) -> async_join_fn_data<Out> {
     return {std::move(out)};
   }
+
+  // Generic version
+  template<class Token, class Data>
+  struct async_join_on_value_impl {
+    void operator()(Data& data, Token&& token) {
+      static_assert(std::is_same<Token, Token>::value, "Inline not yet implemented for join");
+    }
+  };
+
+  // Customisation for NewThreadAsyncToken
+  template<class Data, class Value>
+  struct async_join_on_value_impl<
+      NewThreadAsyncToken<Value, decltype(new_thread())>, Data> {
+    using token_t = NewThreadAsyncToken<Value, decltype(new_thread())>;
+    void operator()(Data& data, token_t&& asyncToken) {
+      auto exec = asyncToken.e_;
+      ::pushmi::submit(
+        exec,
+        ::pushmi::now(exec),
+        ::pushmi::make_single(
+          [asyncToken,
+           out = std::move(static_cast<typename std::decay_t<Data>::out_t&>(data)),
+           exec](auto) mutable {
+            // Token hard coded for this executor type at the moment
+            std::thread t([
+               exec,
+               asyncToken,
+               out]() mutable {
+              std::unique_lock<std::mutex> lk(asyncToken.dataPtr_->cvm_);
+              if(!asyncToken.dataPtr_->flag_) {
+                asyncToken.dataPtr_->cv_.wait(
+                  lk, [&](){return asyncToken.dataPtr_->flag_;});
+              }
+              ::pushmi::submit(
+                exec,
+                ::pushmi::now(exec),
+                ::pushmi::make_single(
+                  [asyncToken, out, exec](auto) mutable {
+                    // Token hard coded for this executor type at the moment
+                    ::pushmi::set_value(out, std::move(asyncToken.dataPtr_->v_));
+                  }
+                ));
+            });
+            t.detach();
+          }
+        )
+      );
+    }
+  };
 
   struct async_join_fn {
     auto operator()() const {
@@ -131,38 +217,10 @@ namespace detail {
                 make_async_join_fn_data(std::move(out)),
                 // copy 'f' to allow multiple calls to submit
                 ::pushmi::on_value([](auto& data, auto&& asyncToken) {
-                  // Async version that does not - why not?
-                  using V = decltype(asyncToken);
-                  auto exec = asyncToken.e_;
-                  ::pushmi::submit(
-                    exec,
-                    ::pushmi::now(exec),
-                    ::pushmi::make_single(
-                      [asyncToken, out = std::move(static_cast<Out&>(data)), exec](auto) mutable {
-                        // Token hard coded for this executor type at the moment
-                        std::thread t([
-                           exec,
-                           asyncToken,
-                           out]() mutable {
-                          std::unique_lock<std::mutex> lk(asyncToken.dataPtr_->cvm_);
-                          if(!asyncToken.dataPtr_->flag_) {
-                            asyncToken.dataPtr_->cv_.wait(
-                              lk, [&](){return asyncToken.dataPtr_->flag_;});
-                          }
-                          ::pushmi::submit(
-                            exec,
-                            ::pushmi::now(exec),
-                            ::pushmi::make_single(
-                              [asyncToken, out, exec](auto) mutable {
-                                // Token hard coded for this executor type at the moment
-                                ::pushmi::set_value(out, std::move(asyncToken.dataPtr_->v_));
-                              }
-                            ));
-                        });
-                        t.detach();
-                      }
-                    )
-                  );
+                  async_join_on_value_impl<
+                    std::decay_t<decltype(asyncToken)>,
+                    std::decay_t<decltype(data)>>{}(
+                      data, std::move(asyncToken));
                 }),
                 ::pushmi::on_error([](auto& data, auto e) noexcept {
                   auto out = std::move(static_cast<Out&>(data));
@@ -180,24 +238,41 @@ namespace detail {
     }
   };
 
-
-  // extracted this to workaround cuda compiler failure to compute the static_asserts in the nested lambda context
-  template<class F>
-  struct async_transform_on_value {
+  // Generic version
+  template<class F, class Token, class Data>
+  struct async_transform_on_value_impl {
     F f_;
-    async_transform_on_value() = default;
-    constexpr explicit async_transform_on_value(F f)
+    async_transform_on_value_impl() = default;
+    constexpr explicit async_transform_on_value_impl(F f)
       : f_(std::move(f)) {}
     template<class Out, class V>
     auto operator()(Out& out, V&& inputToken) {
-      using Result = decltype(f_(std::declval<typename V::ValueType>()));
-      using Executor = typename V::ExecutorType;
-      static_assert(::pushmi::SemiMovable<AsyncToken<Result, Executor>>,
+      static_assert(std::is_same<Token, Token>::value, "Inline not yet implemented for transform");
+    }
+  };
+
+  // Customisation for NewThreadAsyncToken
+  template<class F, class Data, class Value>
+  struct async_transform_on_value_impl<
+      F, NewThreadAsyncToken<Value, decltype(new_thread())>, Data> {
+
+    using token_t = NewThreadAsyncToken<Value, decltype(new_thread())>;
+    F f_;
+
+    async_transform_on_value_impl() = default;
+    constexpr explicit async_transform_on_value_impl(F f)
+      : f_(std::move(f)) {}
+
+    template<class Out>
+    auto operator()(Out& out, token_t&& inputToken) {
+      using Result = decltype(f_(std::declval<typename token_t::ValueType>()));
+      using Executor = typename token_t::ExecutorType;
+      static_assert(::pushmi::SemiMovable<NewThreadAsyncToken<Result, Executor>>,
         "none of the functions supplied to transform can convert this value");
-      static_assert(::pushmi::SingleReceiver<Out, AsyncToken<Result, Executor>>,
+      static_assert(::pushmi::SingleReceiver<Out, NewThreadAsyncToken<Result, Executor>>,
         "Result of value transform cannot be delivered to Out");
 
-      AsyncToken<Result, Executor> outputToken{inputToken.e_};
+      NewThreadAsyncToken<Result, Executor> outputToken{inputToken.e_};
       std::thread t([
          inputToken,
          outputToken,
@@ -243,18 +318,13 @@ namespace detail {
             return ::pushmi::detail::out_from_fn<In>()(
               std::move(out),
               // copy 'f' to allow multiple calls to submit
-              ::pushmi::on_value(
-                async_transform_on_value<F>(f)
-                // [f](Out& out, auto&& v) {
-                //   using V = decltype(v);
-                //   using Result = decltype(f((V&&) v));
-                //   static_assert(::pushmi::SemiMovable<Result>,
-                //     "none of the functions supplied to transform can convert this value");
-                //   static_assert(::pushmi::SingleReceiver<Out, Result>,
-                //     "Result of value transform cannot be delivered to Out");
-                //   ::pushmi::set_value(out, f((V&&) v));
-                // }
-              )
+              ::pushmi::on_value([f](auto& data, auto&& asyncToken) mutable {
+                async_transform_on_value_impl<
+                  F,
+                  std::decay_t<decltype(asyncToken)>,
+                  std::decay_t<decltype(data)>>(std::move(f))(
+                    data, std::move(asyncToken));
+              })
             );
           })
         )

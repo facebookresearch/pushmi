@@ -38,7 +38,7 @@ SCENARIO( "async", "[async]" ) {
         auto comparablething = op::just(2.0) |
           op::via([&](){return nt;}) |
           op::transform([exec = nt](auto v){
-            auto token = pushmi::detail::AsyncToken<
+            auto token = pushmi::detail::NewThreadAsyncToken<
                 std::decay_t<decltype(v)>, std::decay_t<decltype(exec)>>{
               exec};
             token.dataPtr_->v_ = std::forward<decltype(v)>(v);
