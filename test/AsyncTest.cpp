@@ -44,7 +44,6 @@ inline auto inline_executor() {
 }
 
 SCENARIO( "async", "[async]" ) {
-  #if 1
   GIVEN( "A new_thread time_single_deferred" ) {
     auto nt = v::new_thread();
     using NT = decltype(nt);
@@ -135,7 +134,6 @@ SCENARIO( "async", "[async]" ) {
       }
     }
   }
-  #endif
 
   GIVEN( "An inline time_single_deferred" ) {
     auto nt = inline_executor();
