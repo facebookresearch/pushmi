@@ -62,7 +62,23 @@ namespace detail {
   template<class Executor, class Data, class Value>
   struct async_fork_on_value_impl {
     void operator()(Executor exec, Data& data, Value&& value) {
-      static_assert(std::is_same<Executor, Executor>::value, "Inline not yet implemented for fork");
+
+      ::pushmi::submit(
+        exec,
+        ::pushmi::now(exec),
+        ::pushmi::make_single(
+          [value = (Value&&)value,
+           out = std::move(static_cast<typename std::decay_t<Data>::out_t&>(data)),
+           exec](auto) mutable {
+            // Token hard coded for this executor type at the moment
+            auto token = InlineAsyncToken<
+                std::decay_t<decltype(value)>, std::decay_t<decltype(exec)>>{
+              exec};
+            token.value_ = std::forward<Value>(value);
+            ::pushmi::set_value(out, std::move(token));
+          }
+        )
+      );
     }
   };
 
@@ -71,7 +87,6 @@ namespace detail {
   template<class Data, class Value>
   struct async_fork_on_value_impl<decltype(new_thread()), Data, Value> {
     void operator()(decltype(new_thread()) exec, Data& data, Value&& value) {
-
       ::pushmi::submit(
         exec,
         ::pushmi::now(exec),
@@ -155,11 +170,14 @@ namespace detail {
     return {std::move(out)};
   }
 
-  // Generic version
+  // Generic version, using inline execution
   template<class Token, class Data>
   struct async_join_on_value_impl {
     void operator()(Data& data, Token&& token) {
-      static_assert(std::is_same<Token, Token>::value, "Inline not yet implemented for join");
+
+      ::pushmi::set_value(
+        std::move(static_cast<typename std::decay_t<Data>::out_t&>(data)),
+        std::move(token.value_));
     }
   };
 
@@ -167,8 +185,10 @@ namespace detail {
   template<class Data, class Value>
   struct async_join_on_value_impl<
       NewThreadAsyncToken<Value, decltype(new_thread())>, Data> {
+
     using token_t = NewThreadAsyncToken<Value, decltype(new_thread())>;
     void operator()(Data& data, token_t&& asyncToken) {
+
       auto exec = asyncToken.e_;
       ::pushmi::submit(
         exec,
@@ -182,6 +202,7 @@ namespace detail {
                exec,
                asyncToken,
                out]() mutable {
+
               std::unique_lock<std::mutex> lk(asyncToken.dataPtr_->cvm_);
               if(!asyncToken.dataPtr_->flag_) {
                 asyncToken.dataPtr_->cv_.wait(
@@ -192,7 +213,6 @@ namespace detail {
                 ::pushmi::now(exec),
                 ::pushmi::make_single(
                   [asyncToken, out, exec](auto) mutable {
-                    // Token hard coded for this executor type at the moment
                     ::pushmi::set_value(out, std::move(asyncToken.dataPtr_->v_));
                   }
                 ));
@@ -238,7 +258,7 @@ namespace detail {
     }
   };
 
-  // Generic version
+  // Generic version implemented as inline
   template<class F, class Token, class Data>
   struct async_transform_on_value_impl {
     F f_;
@@ -247,7 +267,11 @@ namespace detail {
       : f_(std::move(f)) {}
     template<class Out, class V>
     auto operator()(Out& out, V&& inputToken) {
-      static_assert(std::is_same<Token, Token>::value, "Inline not yet implemented for transform");
+
+      auto outputToken = inputToken;
+      outputToken.value_ = f_(std::move(inputToken.value_));
+
+      ::pushmi::set_value(out, outputToken);
     }
   };
 
@@ -265,6 +289,7 @@ namespace detail {
 
     template<class Out>
     auto operator()(Out& out, token_t&& inputToken) {
+
       using Result = decltype(f_(std::declval<typename token_t::ValueType>()));
       using Executor = typename token_t::ExecutorType;
       static_assert(::pushmi::SemiMovable<NewThreadAsyncToken<Result, Executor>>,
@@ -278,6 +303,7 @@ namespace detail {
          outputToken,
          out,
          func = this->f_]() mutable {
+
         std::unique_lock<std::mutex> inlk(inputToken.dataPtr_->cvm_);
         // Wait for input value
         if(!inputToken.dataPtr_->flag_) {
