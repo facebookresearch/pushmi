@@ -168,12 +168,6 @@ SCENARIO( "async", "[async]" ) {
         }
       }
     }
-  }
-
-
-  GIVEN( "An inline time_single_deferred" ) {
-    auto inline_exec = inline_executor();
-    std::mutex threads_mutex;
 
     WHEN( "async bulk" ) {
       {
