@@ -136,8 +136,7 @@ SCENARIO( "async", "[async]" ) {
   }
 
   GIVEN( "An inline time_single_deferred" ) {
-    auto nt = inline_executor();
-    using NT = decltype(nt);
+    auto inline_exec = inline_executor();
     std::mutex threads_mutex;
 
     WHEN( "async task chain used with via" ) {
@@ -152,7 +151,7 @@ SCENARIO( "async", "[async]" ) {
         };
 
         auto realthing = op::just(2.0) |
-          op::async_fork([&](){return nt;}) |
+          op::async_fork([&](){return inline_exec;}) |
           op::async_transform(workerTask) |
           op::async_transform(workerTask) |
           op::async_transform(workerTask) |
@@ -170,12 +169,30 @@ SCENARIO( "async", "[async]" ) {
       }
     }
   }
-}
 
-/*
-v::bulk_on_value(
-  [](size_t idx, auto& shared){shared += idx;},
-  []() -> size_t { return 10; },
-  [](size_t shape){ return 0; },
-  [](auto& shared){return shared;})
-*/
+
+  GIVEN( "An inline time_single_deferred" ) {
+    auto inline_exec = inline_executor();
+    std::mutex threads_mutex;
+
+    WHEN( "async bulk" ) {
+      {
+        std::vector<std::string> values;
+
+        auto realthing = op::just(2.0) |
+          op::async_fork([&](){return inline_exec;}) |
+          op::async_bulk(
+            [](const auto& input, size_t idx, auto& shared){shared += idx;}, // on_value
+            [](const auto& input) -> size_t { return 10; },                  // shape factory
+            [](const auto& input, size_t shape){ return 0; },                // shared factory
+            [](auto& shared){return shared;}) |                              // result selector
+          op::async_join() |
+          op::blocking_submit(v::on_value([&](auto v) { values.push_back(std::to_string(v)); }));
+
+        THEN( "only the first item was pushed" ) {
+          REQUIRE(values == std::vector<std::string>{"55.000000"});
+        }
+      }
+    }
+  }
+}

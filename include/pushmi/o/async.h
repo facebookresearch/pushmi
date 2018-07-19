@@ -358,11 +358,101 @@ namespace detail {
     });
   }
 
+
+    // Generic version implemented as inline
+    template<
+      class ValueFunction,
+      class ShapeF,
+      class SharedF,
+      class ResultS,
+      class Token,
+      class Data>
+    struct async_bulk_on_value_impl {
+      ValueFunction f_;
+      ShapeF shapeF_;
+      SharedF sharedF_;
+      ResultS resultS_;
+
+      async_bulk_on_value_impl() = default;
+      constexpr explicit async_bulk_on_value_impl(
+        ValueFunction f,
+        ShapeF shapeF,
+        SharedF sharedF,
+        ResultS resultS)
+        : f_(std::move(f)),
+          shapeF_(std::move(shapeF)),
+          sharedF_(std::move(sharedF)),
+          resultS_(std::move(resultS)) {}
+      template<class Out, class V>
+      auto operator()(Out& out, V&& inputToken) {
+
+        auto shape = shapeF_(inputToken.value_);
+        auto shared = sharedF_(inputToken.value_, shape);
+        using ShapeType = decltype(shape);
+        for(ShapeType i{}; i <= shape; ++i) {
+          f_(inputToken.value_, i, shared);
+        }
+        auto outputToken = inputToken;
+        outputToken.value_ = resultS_(shared);
+
+        ::pushmi::set_value(out, std::move(outputToken));
+      }
+    };
+
+    struct async_bulk_fn {
+      template <class ValueFunction, class ShapeF, class SharedF, class ResultS>
+      auto operator()(ValueFunction, ShapeF, SharedF, ResultS) const;
+    };
+
+    template <class ValueFunction, class ShapeF, class SharedF, class ResultS>
+    auto async_bulk_fn::operator()(
+        ValueFunction vfn, ShapeF shapeF, SharedF sharedF, ResultS resultS)
+        const {
+      return ::pushmi::constrain(
+          ::pushmi::lazy::Sender<::pushmi::_1>,
+          [vfn = std::move(vfn),
+           shapeF = std::move(shapeF),
+           sharedF = std::move(sharedF),
+           resultS = std::move(resultS)](auto in) {
+        using In = decltype(in);
+        return ::pushmi::detail::deferred_from<In, ::pushmi::single<>>(
+          std::move(in),
+          ::pushmi::detail::submit_transform_out<In>(
+            ::pushmi::constrain(
+                ::pushmi::lazy::Receiver<::pushmi::_1>,
+                [vfn, shapeF, sharedF, resultS](auto out) {
+                  using Out = decltype(out);
+                  return ::pushmi::detail::out_from_fn<In>()(
+                    std::move(out),
+                    // copy 'f' to allow multiple calls to submit
+                    ::pushmi::on_value(
+                      [vfn, shapeF, sharedF, resultS](
+                          auto& data, auto&& asyncToken) mutable {
+                        async_bulk_on_value_impl<
+                          ValueFunction,
+                          ShapeF,
+                          SharedF,
+                          ResultS,
+                          std::decay_t<decltype(asyncToken)>,
+                          std::decay_t<decltype(data)>>(
+                            std::move(vfn),
+                            std::move(shapeF),
+                            std::move(sharedF),
+                            std::move(resultS))(data, std::move(asyncToken));
+                      })
+                  );
+            })
+          )
+        );
+      });
+    }
+
 } // namespace detail
 
 namespace operators {
 PUSHMI_INLINE_VAR constexpr detail::async_join_fn async_join{};
 PUSHMI_INLINE_VAR constexpr detail::async_fork_fn async_fork{};
 PUSHMI_INLINE_VAR constexpr detail::async_transform_fn async_transform{};
+PUSHMI_INLINE_VAR constexpr detail::async_bulk_fn async_bulk{};
 } // namespace operators
 } // namespace pushmi
