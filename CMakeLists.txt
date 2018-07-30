@@ -73,7 +73,6 @@ endif ()
 add_custom_target(buildSingleHeader
     COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/buildSingleHeader.cmake
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-add_dependencies(pushmi buildSingleHeader)
 
 install(
     DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/

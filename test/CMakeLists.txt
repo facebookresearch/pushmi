@@ -9,6 +9,7 @@ target_link_libraries(FlowTest pushmi catch Threads::Threads)
 
 add_executable(CompileTest CompileTest.cpp)
 target_link_libraries(CompileTest pushmi catch Threads::Threads)
+add_dependencies(CompileTest buildSingleHeader)
 
 add_executable(NewThreadTest NewThreadTest.cpp)
 target_link_libraries(NewThreadTest pushmi catch Threads::Threads)

@@ -122,17 +122,15 @@ public:
     new ((void*)this) single(std::move(that));
     return *this;
   }
-  PUSHMI_TEMPLATE (class T)
-    (requires ConvertibleTo<T&&, V&&>)
-  void value(T&& t) {
+  template <class T>
+  auto value(T&& t) -> PUSHMI_RETURN(void)(requires ConvertibleTo<T&&, V&&>) {
     if (!done_) {
       done_ = true;
       vptr_->rvalue_(data_, (T&&) t);
     }
   }
-  PUSHMI_TEMPLATE (class T)
-    (requires ConvertibleTo<T&, V&>)
-  void value(T& t) {
+  template <class T>
+  auto value(T& t) -> PUSHMI_RETURN(void)(requires ConvertibleTo<T&, V&>) {
     if (!done_) {
       done_ = true;
       vptr_->lvalue_(data_, t);
@@ -187,16 +185,14 @@ class single<VF, EF, DF> {
       : done_(false), vf_(std::move(vf)), ef_(std::move(ef)), df_(std::move(df))
   {}
 
-  PUSHMI_TEMPLATE (class V)
-    (requires Invocable<VF&, V>)
-  void value(V&& v) {
+  template <class V>
+  auto value(V&& v) -> PUSHMI_RETURN(void)(requires Invocable<VF&, V>) {
     if (done_) {return;}
     done_ = true;
     vf_((V&&) v);
   }
-  PUSHMI_TEMPLATE (class E)
-    (requires Invocable<EF&, E>)
-  void error(E e) noexcept {
+  template <class E>
+  auto error(E e) noexcept -> PUSHMI_RETURN(void)(requires Invocable<EF&, E>) {
     static_assert(NothrowInvocable<EF&, E>, "error function must be noexcept");
     if (!done_) {
       done_ = true;
@@ -243,17 +239,16 @@ class single<Data, DVF, DEF, DDF> {
   constexpr single(Data d, DVF vf, DEF ef = DEF{}, DDF df = DDF{})
       : done_(false), data_(std::move(d)), vf_(vf), ef_(ef), df_(df) {}
 
-  PUSHMI_TEMPLATE(class V)
-    (requires Invocable<DVF&, Data&, V>)
-  void value(V&& v) {
+  template <class V>
+  auto value(V&& v) -> PUSHMI_RETURN(void)(requires Invocable<DVF&, Data&, V>) {
     if (!done_) {
       done_ = true;
       vf_(data_, (V&&) v);
     }
   }
-  PUSHMI_TEMPLATE(class E)
-    (requires Invocable<DEF&, Data&, E>)
-  void error(E e) noexcept {
+  template <class E>
+  auto error(E e) noexcept -> PUSHMI_RETURN(void)
+      (requires Invocable<DEF&, Data&, E>) {
     static_assert(
         NothrowInvocable<DEF&, Data&, E>, "error function must be noexcept");
     if (!done_) {
@@ -270,8 +265,7 @@ class single<Data, DVF, DEF, DDF> {
 };
 
 template <>
-class single<>
-    : public single<ignoreVF, abortEF, ignoreDF> {
+class single<> : public single<ignoreVF, abortEF, ignoreDF> {
 public:
   single() = default;
 };
@@ -279,74 +273,90 @@ public:
 ////////////////////////////////////////////////////////////////////////////////
 // make_single
 PUSHMI_INLINE_VAR constexpr struct make_single_fn {
+private:
+  template <bool>
+  struct impl {
+    template <class VF>
+    auto operator()(VF vf) const -> PUSHMI_RETURN(single<VF, abortEF, ignoreDF>)
+        (requires True<> PUSHMI_BROKEN_SUBSUMPTION(&& not Invocable<VF&>)) {
+      return single<VF, abortEF, ignoreDF>{std::move(vf)};
+    }
+    template <class... EFN>
+    auto operator()(on_error_fn<EFN...> ef) const {
+      return single<ignoreVF, on_error_fn<EFN...>, ignoreDF>{std::move(ef)};
+    }
+    template <class DF>
+    auto operator()(DF df) const -> PUSHMI_RETURN(single<ignoreVF, abortEF, DF>)
+        (requires True<> && Invocable<DF&>) {
+      return single<ignoreVF, abortEF, DF>{std::move(df)};
+    }
+    template <class VF, class EF>
+    auto operator()(VF vf, EF ef) const -> PUSHMI_RETURN(single<VF, EF, ignoreDF>)
+        (requires True<> PUSHMI_BROKEN_SUBSUMPTION(&& not Invocable<EF&>)){
+      return single<VF, EF, ignoreDF>{std::move(vf), std::move(ef)};
+    }
+    template <class EF, class DF>
+    auto operator()(EF ef, DF df) const -> PUSHMI_RETURN(single<ignoreVF, EF, DF>)
+        (requires True<> && Invocable<DF&>) {
+      return single<ignoreVF, EF, DF>{std::move(ef), std::move(df)};
+    }
+    template <class VF, class EF, class DF>
+    auto operator()(VF vf, EF ef, DF df) const -> PUSHMI_RETURN(single<VF, EF, DF>)
+        (requires Invocable<DF&>) {
+      return single<VF, EF, DF>{std::move(vf), std::move(ef), std::move(df)};
+    }
+  };
+public:
   inline auto operator()() const {
     return single<>{};
   }
-  PUSHMI_TEMPLATE(class VF)
-    (requires PUSHMI_EXP(defer::True<> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not defer::Receiver<VF> PUSHMI_AND not defer::Invocable<VF&>)))
-  auto operator()(VF vf) const {
-    return single<VF, abortEF, ignoreDF>{std::move(vf)};
+  template <class First, class... Rest,
+            class Fn = impl<(bool) Receiver<First, is_single<>>>>
+  auto operator()(First f, Rest... rest) const ->
+      decltype(Fn{}(std::move(f), std::move(rest)...)) {
+    return Fn{}(std::move(f), std::move(rest)...);
   }
-  template <class... EFN>
-  auto operator()(on_error_fn<EFN...> ef) const {
-    return single<ignoreVF, on_error_fn<EFN...>, ignoreDF>{std::move(ef)};
-  }
-  PUSHMI_TEMPLATE(class DF)
-    (requires PUSHMI_EXP(defer::True<> PUSHMI_AND defer::Invocable<DF&> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not defer::Receiver<DF>)))
-  auto operator()(DF df) const {
-    return single<ignoreVF, abortEF, DF>{std::move(df)};
-  }
-  PUSHMI_TEMPLATE(class VF, class EF)
-    (requires PUSHMI_EXP(defer::True<> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not defer::Receiver<VF> PUSHMI_AND not defer::Invocable<EF&>)))
-  auto operator()(VF vf, EF ef) const {
-    return single<VF, EF, ignoreDF>{std::move(vf), std::move(ef)};
-  }
-  PUSHMI_TEMPLATE(class EF, class DF)
-    (requires PUSHMI_EXP(defer::True<> PUSHMI_AND defer::Invocable<DF&> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not defer::Receiver<EF>)))
-  auto operator()(EF ef, DF df) const {
-    return single<ignoreVF, EF, DF>{std::move(ef), std::move(df)};
-  }
-  PUSHMI_TEMPLATE(class VF, class EF, class DF)
-    (requires PUSHMI_EXP(defer::Invocable<DF&> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not defer::Receiver<VF>)))
-  auto operator()(VF vf, EF ef, DF df) const {
-    return single<VF, EF, DF>{std::move(vf), std::move(ef), std::move(df)};
-  }
-  PUSHMI_TEMPLATE(class Data)
-    (requires PUSHMI_EXP(defer::True<> PUSHMI_AND defer::Receiver<Data, is_single<>>))
+} const make_single {};
+
+template <>
+struct make_single_fn::impl<true> {
+  template <class Data>
   auto operator()(Data d) const {
     return single<Data, passDVF, passDEF, passDDF>{std::move(d)};
   }
-  PUSHMI_TEMPLATE(class Data, class DVF)
-    (requires PUSHMI_EXP(defer::True<> PUSHMI_AND defer::Receiver<Data, is_single<>> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not defer::Invocable<DVF&, Data&>)))
-  auto operator()(Data d, DVF vf) const {
+  template <class Data, class DVF>
+  auto operator()(Data d, DVF vf) const -> PUSHMI_RETURN(single<Data, DVF, passDEF, passDDF>)
+      (requires True<> PUSHMI_BROKEN_SUBSUMPTION(&& not Invocable<DVF&, Data&>)) {
     return single<Data, DVF, passDEF, passDDF>{std::move(d), std::move(vf)};
   }
-  PUSHMI_TEMPLATE(class Data, class... DEFN)
-    (requires PUSHMI_EXP(defer::Receiver<Data, is_single<>>))
+  template <class Data, class... DEFN>
   auto operator()(Data d, on_error_fn<DEFN...> ef) const {
     return single<Data, passDVF, on_error_fn<DEFN...>, passDDF>{std::move(d), std::move(ef)};
   }
-  PUSHMI_TEMPLATE(class Data, class DDF)
-    (requires PUSHMI_EXP(defer::True<> PUSHMI_AND defer::Receiver<Data, is_single<>> PUSHMI_AND defer::Invocable<DDF&, Data&>))
-  auto operator()(Data d, DDF df) const {
+  template <class Data, class DDF>
+  auto operator()(Data d, DDF df) const -> PUSHMI_RETURN(single<Data, passDVF, passDEF, DDF>)
+      (requires True<> && Invocable<DDF&, Data&>) {
     return single<Data, passDVF, passDEF, DDF>{std::move(d), std::move(df)};
   }
-  PUSHMI_TEMPLATE(class Data, class DVF, class DEF)
-    (requires PUSHMI_EXP(defer::Receiver<Data, is_single<>> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not defer::Invocable<DEF&, Data&>)))
-  auto operator()(Data d, DVF vf, DEF ef) const {
+  template <class Data, class DVF, class DEF>
+  auto operator()(Data d, DVF vf, DEF ef) const ->
+      PUSHMI_RETURN(single<Data, DVF, DEF, passDDF>)
+      (requires True<> PUSHMI_BROKEN_SUBSUMPTION(&& not Invocable<DEF&, Data&>)) {
     return single<Data, DVF, DEF, passDDF>{std::move(d), std::move(vf), std::move(ef)};
   }
-  PUSHMI_TEMPLATE(class Data, class DEF, class DDF)
-    (requires PUSHMI_EXP(defer::Receiver<Data, is_single<>> PUSHMI_AND defer::Invocable<DDF&, Data&>))
-  auto operator()(Data d, DEF ef, DDF df) const {
+  template <class Data, class DEF, class DDF>
+  auto operator()(Data d, DEF ef, DDF df) const ->
+      PUSHMI_RETURN(single<Data, passDVF, DEF, DDF>)
+      (requires True<> && Invocable<DDF&, Data&>) {
     return single<Data, passDVF, DEF, DDF>{std::move(d), std::move(ef), std::move(df)};
   }
-  PUSHMI_TEMPLATE(class Data, class DVF, class DEF, class DDF)
-    (requires PUSHMI_EXP(defer::Receiver<Data, is_single<>> PUSHMI_AND defer::Invocable<DDF&, Data&>))
-  auto operator()(Data d, DVF vf, DEF ef, DDF df) const {
+  template <class Data, class DVF, class DEF, class DDF>
+  auto operator()(Data d, DVF vf, DEF ef, DDF df) const ->
+      PUSHMI_RETURN(single<Data, DVF, DEF, DDF>)
+      (requires Invocable<DDF&, Data&>){
     return single<Data, DVF, DEF, DDF>{std::move(d), std::move(vf), std::move(ef), std::move(df)};
   }
-} const make_single {};
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 // deduction guides

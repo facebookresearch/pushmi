@@ -27,9 +27,9 @@ struct __pool_submit {
   using e_t = Executor;
   e_t e;
   explicit __pool_submit(e_t e) : e(std::move(e)) {}
-  PUSHMI_TEMPLATE(class TP, class Out)
-    (requires Regular<TP> && Receiver<Out>)
-  void operator()(TP at, Out out) const {
+  template <class TP, class Out>
+  auto operator()(TP at, Out out) const -> PUSHMI_RETURN(void)
+      (requires Regular<TP> && Receiver<Out>) {
     e.execute([e = this->e, at = std::move(at), out = std::move(out)]() mutable {
       auto tr = trampoline();
       ::pushmi::submit(tr, std::move(at), std::move(out));

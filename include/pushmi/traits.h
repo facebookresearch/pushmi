@@ -192,47 +192,6 @@ PUSHMI_CONCEPT_DEF(
     Semiregular<T> && EqualityComparable<T>
 );
 
-#if 0 //__cpp_lib_invoke >= 201411
-using std::invoke;
-#else
-PUSHMI_TEMPLATE (class F, class...As)
-  (requires requires (
-    std::declval<F>()(std::declval<As>()...)
-  ))
-decltype(auto) invoke(F&& f, As&&...as)
-    noexcept(noexcept(((F&&) f)((As&&) as...))) {
-  return ((F&&) f)((As&&) as...);
-}
-PUSHMI_TEMPLATE (class F, class...As)
-  (requires requires (
-    std::mem_fn(std::declval<F>())(std::declval<As>()...)
-  ) && std::is_member_pointer<F>::value)
-decltype(auto) invoke(F f, As&&...as)
-    noexcept(noexcept(std::declval<decltype(std::mem_fn(f))>()((As&&) as...))) {
-  return std::mem_fn(f)((As&&) as...);
-}
-#endif
-template <class F, class...As>
-using invoke_result_t =
-  decltype(pushmi::invoke(std::declval<F>(), std::declval<As>()...));
-
-PUSHMI_CONCEPT_DEF(
-  template (class F, class... Args)
-  (concept Invocable)(F, Args...),
-    requires(F&& f) (
-      pushmi::invoke((F &&) f, std::declval<Args>()...)
-    )
-);
-
-PUSHMI_CONCEPT_DEF(
-  template (class F, class... Args)
-  (concept NothrowInvocable)(F, Args...),
-    requires(F&& f) (
-      requires_<noexcept(pushmi::invoke((F &&) f, std::declval<Args>()...))>
-    ) &&
-    Invocable<F, Args...>
-);
-
 namespace detail {
 // is_ taken from meta library
 
@@ -244,9 +203,6 @@ struct is_<C<Ts...>, C> : std::true_type {};
 
 template <typename T, template <typename...> class C>
 constexpr bool is_v = is_<T, C>::value;
-
-template <bool B, class T = void>
-using requires_ = std::enable_if_t<B, T>;
 
 PUSHMI_INLINE_VAR constexpr struct as_const_fn {
   template <class T>

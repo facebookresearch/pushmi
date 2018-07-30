@@ -13,14 +13,15 @@
 
 #include "concepts.h"
 #include "traits.h"
+#include "detail/functional.h"
 
 namespace pushmi {
 
 template<class T>
 struct construct {
-  PUSHMI_TEMPLATE(class... AN)
-    (requires Constructible<T, AN...>)
-  auto operator()(AN&&... an) const {
+  template <class... AN>
+  auto operator()(AN&&... an) const -> PUSHMI_RETURN(T)
+      (requires Constructible<T, AN...>) {
     return T{std::forward<AN>(an)...};
   }
 };
@@ -92,17 +93,17 @@ struct passDVF {
 };
 
 struct passDEF {
-  PUSHMI_TEMPLATE(class E, class Data)
-    (requires NoneReceiver<Data, E>)
-  void operator()(Data& out, E e) const noexcept {
+  template <class E, class Data>
+  auto operator()(Data& out, E e) const noexcept -> PUSHMI_RETURN(void)
+      (requires NoneReceiver<Data, E>) {
     ::pushmi::set_error(out, e);
   }
 };
 
 struct passDDF {
-  PUSHMI_TEMPLATE(class Data)
-    (requires Receiver<Data>)
-  void operator()(Data& out) const {
+  template <class Data>
+  auto operator()(Data& out) const -> PUSHMI_RETURN(void)
+      (requires Receiver<Data>) {
     ::pushmi::set_done(out);
   }
 };

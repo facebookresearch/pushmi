@@ -48,16 +48,16 @@ private:
   template <class... AN>
   struct fn {
     std::tuple<AN...> args_;
-    PUSHMI_TEMPLATE(class In)
-      (requires submit_detail::AutoSenderTo<In, AN...>)
-    In operator()(In in) {
+    template <class In>
+    auto operator()(In in) -> PUSHMI_RETURN(In)
+        (requires submit_detail::AutoSenderTo<In, AN...>) {
       auto out{::pushmi::detail::out_from_fn<In>()(std::move(args_))};
       ::pushmi::submit(in, std::move(out));
       return in;
     }
-    PUSHMI_TEMPLATE(class In)
-      (requires submit_detail::AutoTimeSenderTo<In, AN...>)
-    In operator()(In in) {
+    template <class In>
+    auto operator()(In in) -> PUSHMI_RETURN(In)
+        (requires submit_detail::AutoTimeSenderTo<In, AN...>) {
       auto out{::pushmi::detail::out_from_fn<In>()(std::move(args_))};
       ::pushmi::submit(in, ::pushmi::now(in), std::move(out));
       return in;
@@ -76,9 +76,9 @@ private:
   struct fn {
     TP at_;
     std::tuple<AN...> args_;
-    PUSHMI_TEMPLATE(class In)
-      (requires submit_detail::AutoTimeSenderTo<In, AN...>)
-    In operator()(In in) {
+    template <class In>
+    auto operator()(In in) -> PUSHMI_RETURN(In)
+        (requires submit_detail::AutoTimeSenderTo<In, AN...>) {
       auto out{::pushmi::detail::out_from_fn<In>()(std::move(args_))};
       ::pushmi::submit(in, std::move(at_), std::move(out));
       return in;
@@ -98,9 +98,9 @@ private:
   struct fn {
     D after_;
     std::tuple<AN...> args_;
-    PUSHMI_TEMPLATE(class In)
-      (requires submit_detail::AutoTimeSenderTo<In, AN...>)
-    In operator()(In in) {
+    template <class In>
+    auto operator()(In in) -> PUSHMI_RETURN(In)
+        (requires submit_detail::AutoTimeSenderTo<In, AN...>) {
       // TODO - only move, move-only types..
       // if out can be copied, then submit can be called multiple
       // times..
@@ -180,14 +180,14 @@ private:
       return in;
     }
 
-    PUSHMI_TEMPLATE(class In)
-      (requires submit_detail::AutoSenderTo<In, AN...>)
-    In operator()(In in) {
+    template <class In>
+    auto operator()(In in) -> PUSHMI_RETURN(In)
+        (requires submit_detail::AutoSenderTo<In, AN...>) {
       return this->impl_<false>(std::move(in));
     }
-    PUSHMI_TEMPLATE(class In)
-      (requires submit_detail::AutoTimeSenderTo<In, AN...>)
-    In operator()(In in) {
+    template <class In>
+    auto operator()(In in) -> PUSHMI_RETURN(In)
+        (requires submit_detail::AutoTimeSenderTo<In, AN...>) {
       return this->impl_<true>(std::move(in));
     }
   };
@@ -201,9 +201,9 @@ public:
 template <class T>
 struct get_fn {
   // TODO constrain this better
-  PUSHMI_TEMPLATE (class In)
-    (requires Sender<In>)
-  T operator()(In in) const {
+  template <class In>
+  auto operator()(In in) const -> PUSHMI_RETURN(T)
+      (requires Sender<In>) {
     pushmi::detail::opt<T> result_;
     std::exception_ptr ep_;
     auto out = make_single(

@@ -25,26 +25,23 @@ struct subject<T, PS> {
     std::exception_ptr ep_;
     std::vector<any_single<T>> receivers_;
     std::mutex lock_;
-    PUSHMI_TEMPLATE(class Out)
-      (requires Receiver<Out>)
-    void submit(Out out) {
+    template <class Out>
+    auto submit(Out out) -> PUSHMI_RETURN(void)(requires Receiver<Out>) {
       std::unique_lock<std::mutex> guard(lock_);
       if (ep_) {::pushmi::set_error(out, ep_); return;}
       if (!!t_) {::pushmi::set_value(out, (const T&)t_); return;}
       if (done_) {::pushmi::set_done(out); return;}
       receivers_.push_back(any_single<T>{out});
     }
-    PUSHMI_TEMPLATE(class V)
-      (requires SemiMovable<V>)
-    void value(V&& v) {
+    template <class V>
+    auto value(V&& v) -> PUSHMI_RETURN(void)(requires SemiMovable<V>) {
       std::unique_lock<std::mutex> guard(lock_);
       t_ = detail::as_const(v);
       for (auto& out : receivers_) {::pushmi::set_value(out, (V&&) v);}
       receivers_.clear();
     }
-    PUSHMI_TEMPLATE(class E)
-      (requires SemiMovable<E>)
-    void error(E e) noexcept {
+    template <class E>
+    auto error(E e) noexcept -> PUSHMI_RETURN(void)(requires SemiMovable<E>) {
       std::unique_lock<std::mutex> guard(lock_);
       ep_ = e;
       for (auto& out : receivers_) {::pushmi::set_error(out, std::move(e));}
@@ -60,19 +57,17 @@ struct subject<T, PS> {
 
   // need a template overload of none/deferred and the rest that stores a 'ptr' with its own lifetime management
   struct subject_receiver {
-
-    using properties = property_set_insert_t<property_set<is_receiver<>, is_single<>>, PS>;
+    using properties =
+        property_set_insert_t<property_set<is_receiver<>, is_single<>>, PS>;
 
     std::shared_ptr<subject_shared> s;
 
-    PUSHMI_TEMPLATE(class V)
-      (requires SemiMovable<V>)
-    void value(V&& v) {
+    template <class V>
+    auto value(V&& v) -> PUSHMI_RETURN(void)(requires SemiMovable<V>) {
       s->value((V&&) v);
     }
-    PUSHMI_TEMPLATE(class E)
-      (requires SemiMovable<E>)
-    void error(E e) noexcept {
+    template <class E>
+    auto error(E e) noexcept -> PUSHMI_RETURN(void)(requires SemiMovable<E>) {
       s->error(std::move(e));
     }
     void done() {
@@ -82,9 +77,8 @@ struct subject<T, PS> {
 
   std::shared_ptr<subject_shared> s = std::make_shared<subject_shared>();
 
-  PUSHMI_TEMPLATE(class Out)
-    (requires Receiver<Out>)
-  void submit(Out out) {
+  template <class Out>
+  auto submit(Out out) -> PUSHMI_RETURN(void)(requires Receiver<Out>) {
     s->submit(std::move(out));
   }
 

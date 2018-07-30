@@ -421,10 +421,9 @@ PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN
 #define PUSHMI_BROKEN_SUBSUMPTION(...) __VA_ARGS__
 #define PUSHMI_TYPE_CONSTRAINT(...) class
 // bool() is used to prevent 'error: pasting "PUSHMI_PP_REQUIRES_PROBE_" and "::" does not give a valid preprocessing token'
-#define PUSHMI_EXP(...) bool(::pushmi::expAnd(__VA_ARGS__))
+#define PUSHMI_EXP(...) bool(::pushmi::concepts::detail::expAnd(__VA_ARGS__))
 #define PUSHMI_AND ,
 #endif
-
 
 #if __cpp_concepts
 #define PUSHMI_PP_CONSTRAINED_USING(REQUIRES, NAME, ...)                       \
@@ -435,6 +434,18 @@ PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN
 #define PUSHMI_PP_CONSTRAINED_USING(REQUIRES, NAME, ...)                       \
   using NAME std::enable_if_t<bool(REQUIRES), __VA_ARGS__>;                    \
   /**/
+#endif
+
+#if __cpp_concepts
+#define PUSHMI_RETURN(...) __VA_ARGS__ PUSHMI_PP_EXPAND
+#else
+#define PUSHMI_RETURN(...)                                                     \
+    ::pushmi::concepts::detail::enable_if_t<__VA_ARGS__, PUSHMI_RETURN_        \
+    /**/
+#define PUSHMI_RETURN_(...)                                                    \
+    (bool) (PUSHMI_PP_CAT(PUSHMI_RETURN_, __VA_ARGS__))>                       \
+    /**/
+#define PUSHMI_RETURN_requires
 #endif
 
 namespace pushmi {
@@ -451,13 +462,17 @@ inline constexpr bool requires_() {
   return true;
 }
 
-template <class T, class U>
-struct And;
-template <class T, class U>
-struct Or;
+template <typename T, bool If>
+using enable_if_t = std::enable_if_t<If, T>;
+
+template <class...>
+struct And : std::true_type {};
+template <class...>
+struct Or : std::false_type {};
 
 template <class T>
 struct Not {
+    using assert_is_class_type = int T::*;
     explicit constexpr operator bool() const noexcept {
         return !(bool) T{};
     }
@@ -479,10 +494,11 @@ struct Not {
     }
 };
 
-template <class T, class U>
-struct And {
+template <class T, class... Us>
+struct And<T, Us...> {
+    using assert_is_class_type_T = int T::*;
     explicit constexpr operator bool() const noexcept {
-        return (bool) std::conditional_t<(bool) T{}, U, std::false_type>{};
+        return (bool) std::conditional_t<(bool) T{}, And<Us...>, std::false_type>{};
     }
     PUSHMI_TEMPLATE (class This = And, bool B)
         (requires B == (bool) This{})
@@ -502,10 +518,11 @@ struct And {
     }
 };
 
-template <class T, class U>
-struct Or {
+template <class T, class... Us>
+struct Or<T, Us...> {
+    using assert_is_class_type_T = int T::*;
     explicit constexpr operator bool() const noexcept {
-        return (bool) std::conditional_t<(bool) T{}, std::true_type, U>{};
+        return (bool) std::conditional_t<(bool) T{}, std::true_type, Or<Us...>>{};
     }
     PUSHMI_TEMPLATE (class This = Or, bool B)
         (requires B == (bool) This{})
@@ -524,26 +541,16 @@ struct Or {
         return Or<Or, That>{};
     }
 };
+
+PUSHMI_INLINE_VAR const struct ExpAnd {
+    template <class... Ts>
+    constexpr And<Ts...> operator()(Ts...) const {
+        return {};
+    }
+} expAnd{};
+
 } // namespace detail
 } // namespace concepts
-
-namespace isolated {
-
-template<class T0>
-constexpr auto expAnd(T0&& t0) {
-  return (T0&&)t0;
-}
-template<class T0, class... TN>
-constexpr auto expAnd(T0&& t0, TN&&... tn) {
-  return concepts::detail::And<T0, decltype(isolated::expAnd((TN&&)tn...))>{};
-}
-
-}
-
-template<class... TN>
-constexpr auto expAnd(TN&&... tn) {
-  return isolated::expAnd((TN&&)tn...);
-}
 
 template <class T>
 constexpr bool implicitly_convertible_to(T) {
