@@ -87,7 +87,7 @@ struct entangled {
     // have to hold *both* locks to write any of either entangled object's
     // metadata, but need only one to read it.
     int expected = kUnlocked;
-    if (!stateMachine.compare_exchange_weak(expected, kLocked)) {
+    if (!stateMachine.compare_exchange_weak(expected, kLocked, std::memory_order_seq_cst, std::memory_order_relaxed)) {
       return false;
     }
     // Having *either* object local-locked protects the data in both objects.
@@ -96,7 +96,7 @@ struct entangled {
       return true;
     }
     expected = kUnlocked;
-    if (dual->stateMachine.compare_exchange_strong(expected, kLocked)) {
+    if (dual->stateMachine.compare_exchange_strong(expected, kLocked, std::memory_order_seq_cst)) {
       return true;
     }
     // We got here, and so hit the race; we're deadlocked if we stick to
@@ -108,15 +108,15 @@ struct entangled {
     if ((uintptr_t)this < (uintptr_t)dual) {
       // I get to win the race. I'll acquire the locks, but have to make sure
       // my memory stays valid until the other thread acknowledges its loss.
-      while (stateMachine.load() != kLockedAndLossAcknowledged) {
+      while (stateMachine.load(std::memory_order_relaxed) != kLockedAndLossAcknowledged) {
         // Spin.
       }
-      stateMachine.store(kLocked);
+      stateMachine.store(kLocked, std::memory_order_relaxed);
       return true;
     } else {
       // I lose the race, but have to coordinate with the winning thread, so
       // that it knows that I'm not about to try to touch it's data
-      dual->stateMachine.store(kLockedAndLossAcknowledged);
+      dual->stateMachine.store(kLockedAndLossAcknowledged, std::memory_order_relaxed);
       return false;
     }
   }
@@ -139,9 +139,9 @@ struct entangled {
     // other object so long as its locked. Going in the other order could let
     // another thread incorrectly think we're going down the deadlock-avoidance
     // path in tryLock().
-    stateMachine.store(kUnlocked);
+    stateMachine.store(kUnlocked, std::memory_order_release);
     if (dual != nullptr) {
-      dual->stateMachine.store(kUnlocked);
+      dual->stateMachine.store(kUnlocked, std::memory_order_release);
     }
   }
 

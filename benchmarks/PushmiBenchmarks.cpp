@@ -49,7 +49,7 @@ struct inline_executor {
     }
 };
 
-struct inline_executor_flow_single {
+struct inline_executor_flow_single_entangle {
     using properties = mi::property_set<mi::is_sender<>, mi::is_flow<>, mi::is_single<>>;
     template<class Out>
     void submit(Out out) {
@@ -91,6 +91,59 @@ struct inline_executor_flow_single {
   }
 };
 
+struct inline_executor_flow_single_shared {
+    using properties = mi::property_set<mi::is_sender<>, mi::is_flow<>, mi::is_single<>>;
+    template<class Out>
+    void submit(Out out) {
+
+      // boolean cancellation
+      bool stop = false;
+      auto set_stop = [](std::atomic<bool>& stop) {
+        stop = true;
+      };
+      auto tokens = std::make_shared<std::pair<std::atomic<bool>, decltype(set_stop)>>(stop, set_stop);
+      auto first = std::shared_ptr<std::atomic<bool>>(tokens, &tokens->first);
+      auto second = std::shared_ptr<decltype(set_stop)>(tokens, &tokens->second);
+
+      using Stop = decltype(first);
+      using Stopper = decltype(second);
+      struct Data : mi::none<> {
+        Data(Stopper stopper, Stop stop) : stopper(std::move(stopper)), stop(std::move(stop)) {}
+        Stopper stopper;
+        Stop stop;
+      };
+      auto up = mi::MAKE(none)(
+          Data{std::move(second), first},
+          [](auto& data, auto e) noexcept {
+            (*(data.stopper))(*(data.stop));
+          },
+          [](auto& data) {
+            (*(data.stopper))(*(data.stop));
+          });
+
+    // pass reference for cancellation.
+    ::mi::set_starting(out, std::move(up));
+
+    if (!*first) {
+      ::mi::set_value(out, *this);
+    } else {
+      // cancellation is not an error
+      ::mi::set_done(out);
+    }
+  }
+};
+
+struct inline_executor_flow_single_ignore {
+    using properties = mi::property_set<mi::is_sender<>, mi::is_flow<>, mi::is_single<>>;
+    template<class Out>
+    void submit(Out out) {
+      // pass reference for cancellation.
+      ::mi::set_starting(out, mi::none<>{});
+
+      ::mi::set_value(out, *this);
+    }
+};
+
 struct inline_executor_many {
     using properties = mi::property_set<mi::is_sender<>, mi::is_many<>>;
     template<class Out>
@@ -116,14 +169,38 @@ NONIUS_BENCHMARK("inline 10 single", [](nonius::chronometer meter){
   });
 })
 
-NONIUS_BENCHMARK("inline 10 flow_single", [](nonius::chronometer meter){
+NONIUS_BENCHMARK("inline 10 flow_single shared", [](nonius::chronometer meter){
   int counter = 0;
-  auto ie = inline_executor_flow_single{};
+  auto ie = inline_executor_flow_single_shared{};
   using IE = decltype(ie);
   countdownflowsingle flowsingle{counter};
   meter.measure([&]{
     counter = 10;
-    ie | op::submit(mi::make_flow_single(on_value(flowsingle)));
+    ie | op::submit(mi::make_flow_single(flowsingle));
+    return counter;
+  });
+})
+
+NONIUS_BENCHMARK("inline 10 flow_single entangle", [](nonius::chronometer meter){
+  int counter = 0;
+  auto ie = inline_executor_flow_single_entangle{};
+  using IE = decltype(ie);
+  countdownflowsingle flowsingle{counter};
+  meter.measure([&]{
+    counter = 10;
+    ie | op::submit(mi::make_flow_single(flowsingle));
+    return counter;
+  });
+})
+
+NONIUS_BENCHMARK("inline 10 flow_single ignore cancellation", [](nonius::chronometer meter){
+  int counter = 0;
+  auto ie = inline_executor_flow_single_ignore{};
+  using IE = decltype(ie);
+  countdownflowsingle flowsingle{counter};
+  meter.measure([&]{
+    counter = 10;
+    ie | op::submit(mi::make_flow_single(flowsingle));
     return counter;
   });
 })
