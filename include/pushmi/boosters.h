@@ -34,6 +34,12 @@ struct construct_deduced<none>;
 template<>
 struct construct_deduced<single>;
 
+template<>
+struct construct_deduced<many>;
+
+template<>
+struct construct_deduced<flow_single>;
+
 template <template <class...> class T, class... AN>
 using deduced_type_t = pushmi::invoke_result_t<construct_deduced<T>, AN...>;
 
@@ -53,13 +59,14 @@ struct ignoreDF {
   void operator()() {}
 };
 
-struct ignoreStpF {
-  void operator()() {}
+struct ignoreNF {
+  template <class V>
+  void operator()(V&&) {}
 };
 
 struct ignoreStrtF {
   template <class Up>
-  void operator()(Up&) {}
+  void operator()(Up&&) {}
 };
 
 
@@ -100,21 +107,23 @@ struct passDDF {
   }
 };
 
-struct passDStpF {
-  PUSHMI_TEMPLATE(class Data)
-    (requires Receiver<Data>)
-  void operator()(Data& out) const {
-    ::pushmi::set_stopping(out);
+struct passDNXF {
+  PUSHMI_TEMPLATE(class V, class Data)
+    (requires requires (
+      ::pushmi::set_next(std::declval<Data&>(), std::declval<V>())
+    ) && Receiver<Data>)
+  void operator()(Data& out, V&& v) const {
+    ::pushmi::set_next(out, (V&&) v);
   }
 };
 
 struct passDStrtF {
   PUSHMI_TEMPLATE(class Up, class Data)
     (requires requires (
-      ::pushmi::set_starting(std::declval<Data&>(), std::declval<Up&>())
+      ::pushmi::set_starting(std::declval<Data&>(), std::declval<Up>())
     ) && Receiver<Data>)
-  void operator()(Data& out, Up& up) const {
-    ::pushmi::set_starting(out, up);
+  void operator()(Data& out, Up up) const {
+    ::pushmi::set_starting(out, std::move(up));
   }
 };
 
@@ -240,16 +249,15 @@ auto on_done(Fn fn) -> on_done_fn<Fn> {
   return on_done_fn<Fn>{std::move(fn)};
 }
 
-template <class Fn>
-struct on_stopping_fn : Fn {
-  constexpr on_stopping_fn() = default;
-  constexpr explicit on_stopping_fn(Fn fn) : Fn(std::move(fn)) {}
-  using Fn::operator();
+template <class... Fns>
+struct on_next_fn : overload_fn<Fns...> {
+  constexpr on_next_fn() = default;
+  using overload_fn<Fns...>::overload_fn;
 };
 
-template <class Fn>
-auto on_stopping(Fn fn) -> on_stopping_fn<Fn> {
-  return on_stopping_fn<Fn>{std::move(fn)};
+template <class... Fns>
+auto on_next(Fns... fns) -> on_next_fn<Fns...> {
+  return on_next_fn<Fns...>{std::move(fns)...};
 }
 
 template <class... Fns>

@@ -57,7 +57,13 @@ template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
 class single;
 
 template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
+class many;
+
+template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
 class single_deferred;
+
+template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
+class many_deferred;
 
 template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... TN>
 class time_single_deferred;
@@ -70,8 +76,7 @@ class flow_single_deferred;
 
 template<
   class E = std::exception_ptr,
-  class TP = std::chrono::system_clock::time_point,
-  int i = 0>
+  class TP = std::chrono::system_clock::time_point>
 struct any_time_executor_ref;
 
 namespace operators {}

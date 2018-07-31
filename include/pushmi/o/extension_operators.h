@@ -12,7 +12,11 @@
 #include "../single.h"
 #include "../deferred.h"
 #include "../single_deferred.h"
+#include "../many.h"
+#include "../many_deferred.h"
 #include "../time_single_deferred.h"
+#include "../flow_single.h"
+#include "../flow_single_deferred.h"
 #include "../detail/if_constexpr.h"
 #include "../detail/functional.h"
 
@@ -44,17 +48,22 @@ constexpr decltype(auto) apply(F&& f, Tuple&& t) {
 
 namespace detail {
 
-template <class Tag>
+template <class... TagN>
 struct make_receiver;
 template <>
-struct make_receiver<is_none<>> : construct_deduced<none> {};
+struct make_receiver<is_none<>, void> : construct_deduced<none> {};
 template <>
-struct make_receiver<is_single<>> : construct_deduced<single> {};
+struct make_receiver<is_single<>, void> : construct_deduced<single> {};
+template <>
+struct make_receiver<is_many<>, void> : construct_deduced<many> {};
+template <>
+struct make_receiver<is_single<>, is_flow<>> : construct_deduced<flow_single> {};
 
 template <PUSHMI_TYPE_CONSTRAINT(Sender) In>
 struct out_from_fn {
   using Cardinality = property_set_index_t<properties_t<In>, is_silent<>>;
-  using Make = make_receiver<Cardinality>;
+  using Flow = std::conditional_t<property_query_v<properties_t<In>, is_flow<>>, is_flow<>, void>;
+  using Make = make_receiver<Cardinality, Flow>;
   PUSHMI_TEMPLATE (class... Ts)
    (requires Invocable<Make, Ts...>)
   auto operator()(std::tuple<Ts...> args) const {
@@ -76,61 +85,72 @@ struct out_from_fn {
 };
 
 PUSHMI_TEMPLATE(class In, class FN)
-  (requires Sender<In> && SemiMovable<FN>)
+  (requires Sender<In> && SemiMovable<FN>
+    PUSHMI_BROKEN_SUBSUMPTION(&& not TimeSender<In>))
 auto submit_transform_out(FN fn){
-  PUSHMI_IF_CONSTEXPR_RETURN( ((bool) TimeSender<In>) (
-    return on_submit(
-      constrain(lazy::Receiver<_3>,
-        [fn = std::move(fn)](In& in, auto tp, auto out) {
-          ::pushmi::submit(in, tp, fn(std::move(out)));
-        }
-      )
-    );
-  ) else (
-    return on_submit(
-      constrain(lazy::Receiver<_2>,
-        [fn = std::move(fn)](In& in, auto out) {
-          ::pushmi::submit(in, fn(std::move(out)));
-        }
-      )
-    );
-  ))
+  return on_submit(
+    constrain(lazy::Receiver<_2>,
+      [fn = std::move(fn)](In& in, auto out) {
+        ::pushmi::submit(in, fn(std::move(out)));
+      }
+    )
+  );
+}
+
+PUSHMI_TEMPLATE(class In, class FN)
+  (requires TimeSender<In> && SemiMovable<FN>)
+auto submit_transform_out(FN fn){
+  return on_submit(
+    constrain(lazy::Receiver<_3>,
+      [fn = std::move(fn)](In& in, auto tp, auto out) {
+        ::pushmi::submit(in, tp, fn(std::move(out)));
+      }
+    )
+  );
 }
 
 PUSHMI_TEMPLATE(class In, class SDSF, class TSDSF)
-  (requires Sender<In> && SemiMovable<SDSF> && SemiMovable<TSDSF>)
+  (requires Sender<In> && SemiMovable<SDSF> && SemiMovable<TSDSF>
+    PUSHMI_BROKEN_SUBSUMPTION(&& not TimeSender<In>))
 auto submit_transform_out(SDSF sdsf, TSDSF tsdsf) {
-  PUSHMI_IF_CONSTEXPR_RETURN( ((bool) TimeSender<In>) (
-    return on_submit(
-      constrain(lazy::Receiver<_3> && lazy::Invocable<TSDSF&, In&, _2, _3>,
-        [tsdsf = std::move(tsdsf)](In& in, auto tp, auto out) {
-          tsdsf(in, tp, std::move(out));
-        }
-      )
-    );
-  ) else (
-    return on_submit(
-      constrain(lazy::Receiver<_2> && lazy::Invocable<SDSF&, In&, _2>,
-        [sdsf = std::move(sdsf)](In& in, auto out) {
-          sdsf(in, std::move(out));
-        }
-      )
-    );
-  ))
+  return on_submit(
+    constrain(lazy::Receiver<_2> && lazy::Invocable<SDSF&, In&, _2>,
+      [sdsf = std::move(sdsf)](In& in, auto out) {
+        sdsf(in, std::move(out));
+      }
+    )
+  );
 }
 
-PUSHMI_TEMPLATE(class In, class Out)
-  (requires Sender<In> && Receiver<Out>)
+PUSHMI_TEMPLATE(class In, class SDSF, class TSDSF)
+  (requires TimeSender<In> && SemiMovable<SDSF> && SemiMovable<TSDSF>)
+auto submit_transform_out(SDSF sdsf, TSDSF tsdsf) {
+  return on_submit(
+    constrain(lazy::Receiver<_3> && lazy::Invocable<TSDSF&, In&, _2, _3>,
+      [tsdsf = std::move(tsdsf)](In& in, auto tp, auto out) {
+        tsdsf(in, tp, std::move(out));
+      }
+    )
+  );
+}
+
+PUSHMI_TEMPLATE(class In)
+  (requires Sender<In>)
 auto deferred_from_maker() {
-  PUSHMI_IF_CONSTEXPR_RETURN( ((bool) TimeSenderTo<In, Out, is_single<>>) (
-    return make_time_single_deferred;
+  PUSHMI_IF_CONSTEXPR_RETURN( ((bool) Sender<In, is_flow<>, is_single<>>) (
+    return make_flow_single_deferred;
   ) else (
-    PUSHMI_IF_CONSTEXPR_RETURN( ((bool) SenderTo<In, Out, is_single<>>) (
-      return make_single_deferred;
+    PUSHMI_IF_CONSTEXPR_RETURN( ((bool) Sender<In, is_time<>, is_single<>>) (
+      return make_time_single_deferred;
     ) else (
-      PUSHMI_IF_CONSTEXPR_RETURN( ((bool) SenderTo<In, Out>) (
-        return make_deferred;
+      PUSHMI_IF_CONSTEXPR_RETURN( ((bool) Sender<In, is_single<>>) (
+        return make_single_deferred;
       ) else (
+        PUSHMI_IF_CONSTEXPR_RETURN( ((bool) Sender<In, is_many<>>) (
+          return make_many_deferred;
+        ) else (
+          return make_deferred;
+        ))
       ))
     ))
   ))
@@ -139,13 +159,25 @@ auto deferred_from_maker() {
 PUSHMI_TEMPLATE(class In, class Out, class... FN)
   (requires Sender<In> && Receiver<Out>)
 auto deferred_from(FN&&... fn) {
-  return deferred_from_maker<In, Out>()((FN&&) fn...);
+  return deferred_from_maker<In>()((FN&&) fn...);
 }
 
 PUSHMI_TEMPLATE(class In, class Out, class... FN)
   (requires Sender<In> && Receiver<Out>)
 auto deferred_from(In in, FN&&... fn) {
-  return deferred_from_maker<In, Out>()(std::move(in), (FN&&) fn...);
+  return deferred_from_maker<In>()(std::move(in), (FN&&) fn...);
+}
+
+PUSHMI_TEMPLATE(class In, class... FN)
+  (requires Sender<In>)
+auto deferred_from(FN&&... fn) {
+  return deferred_from_maker<In>()((FN&&) fn...);
+}
+
+PUSHMI_TEMPLATE(class In, class... FN)
+  (requires Sender<In>)
+auto deferred_from(In in, FN&&... fn) {
+  return deferred_from_maker<In>()(std::move(in), (FN&&) fn...);
 }
 
 PUSHMI_TEMPLATE(
@@ -203,12 +235,13 @@ struct set_done_fn {
   }
 };
 
-struct set_stopping_fn {
-  auto operator()() const {
-    return constrain(lazy::Receiver<_1>,
-      [](auto out) {
-        ::pushmi::set_stopping(out);
-      }
+struct set_next_fn {
+  template<class V>
+  auto operator()(V&& v) const {
+    return constrain(lazy::Receiver<_1, is_many<>>,
+        [v = (V&&) v](auto out) mutable {
+          ::pushmi::set_next(out, (V&&) v);
+        }
     );
   }
 };
@@ -263,7 +296,7 @@ namespace extension_operators {
 PUSHMI_INLINE_VAR constexpr detail::set_done_fn set_done{};
 PUSHMI_INLINE_VAR constexpr detail::set_error_fn set_error{};
 PUSHMI_INLINE_VAR constexpr detail::set_value_fn set_value{};
-PUSHMI_INLINE_VAR constexpr detail::set_stopping_fn set_stopping{};
+PUSHMI_INLINE_VAR constexpr detail::set_next_fn set_next{};
 PUSHMI_INLINE_VAR constexpr detail::set_starting_fn set_starting{};
 PUSHMI_INLINE_VAR constexpr detail::do_submit_fn submit{};
 PUSHMI_INLINE_VAR constexpr detail::now_fn now{};

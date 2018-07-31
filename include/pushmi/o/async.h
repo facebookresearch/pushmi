@@ -346,7 +346,7 @@ namespace detail {
               // copy 'f' to allow multiple calls to submit
               ::pushmi::on_value([f](auto& data, auto&& asyncToken) mutable {
                 async_transform_on_value_impl<
-                  F,
+                  std::decay_t<F>, // Decay to work around gcc bug
                   std::decay_t<decltype(asyncToken)>,
                   std::decay_t<decltype(data)>>(std::move(f))(
                     data, std::move(asyncToken));
