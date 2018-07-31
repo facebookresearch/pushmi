@@ -1547,8 +1547,8 @@ void set_next(S& s, V&& v) noexcept(noexcept(s.next((V&&) v))) {
 
 PUSHMI_TEMPLATE (class S, class Up)
   (requires requires (std::declval<S&>().starting(std::declval<Up>())))
-void set_starting(S& s, Up up) noexcept(noexcept(s.starting(std::move(up)))) {
-  s.starting(std::move(up));
+void set_starting(S& s, Up&& up) noexcept(noexcept(s.starting((Up&&) up))) {
+  s.starting((Up&&) up);
 }
 
 PUSHMI_TEMPLATE (class SD, class Out)
@@ -1621,9 +1621,9 @@ void set_next(std::reference_wrapper<S> s, V&& v) noexcept(
 }
 PUSHMI_TEMPLATE (class S, class Up)
   (requires requires ( set_starting(std::declval<S&>(), std::declval<Up>()) ))
-void set_starting(std::reference_wrapper<S> s, Up up) noexcept(
-  noexcept(set_starting(s.get(), std::move(up)))) {
-  set_starting(s.get(), std::move(up));
+void set_starting(std::reference_wrapper<S> s, Up&& up) noexcept(
+  noexcept(set_starting(s.get(), (Up&&) up))) {
+  set_starting(s.get(), (Up&&) up);
 }
 PUSHMI_TEMPLATE (class SD, class Out)
   (requires requires ( submit(std::declval<SD&>(), std::declval<Out>()) ))
@@ -1710,10 +1710,10 @@ struct set_starting_fn {
       set_starting(std::declval<S&>(), std::declval<Up>()),
       set_error(std::declval<S&>(), std::current_exception())
     ))
-  void operator()(S&& s, Up up) const
-      noexcept(noexcept(set_starting(s, std::move(up)))) {
+  void operator()(S&& s, Up&& up) const
+      noexcept(noexcept(set_starting(s, (Up&&) up))) {
     try {
-      set_starting(s, std::move(up));
+      set_starting(s, (Up&&) up);
     } catch (...) {
       set_error(s, std::current_exception());
     }
@@ -2472,8 +2472,8 @@ struct passDStrtF {
     (requires requires (
       ::pushmi::set_starting(std::declval<Data&>(), std::declval<Up>())
     ) && Receiver<Data>)
-  void operator()(Data& out, Up up) const {
-    ::pushmi::set_starting(out, std::move(up));
+  void operator()(Data& out, Up&& up) const {
+    ::pushmi::set_starting(out, (Up&&) up);
   }
 };
 
