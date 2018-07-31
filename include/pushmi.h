@@ -1311,43 +1311,40 @@ namespace aliases {
 
 namespace pushmi {
 
-#if 0
 
-template <class T, class Dual>
-struct entangled {
-  T t;
-  entangled<Dual, T>* dual;
-
-  ~entangled() {
-    if (!!dual) {
-      dual->dual = nullptr;
-    }
-  }
-  explicit entangled(T t) : t(std::move(t)), dual(nullptr) {}
-  entangled(entangled&& o) : t(std::move(o.t)), dual(o.dual) {
-    o.dual = nullptr;
-    if (!!dual) {
-      dual->dual = this;
-    }
-  }
-
-  entangled() = delete;
-  entangled(const entangled&) = delete;
-  entangled& operator=(const entangled&) = delete;
-  entangled& operator=(entangled&&) = delete;
-
-  Dual* lockPointerToDual() {
-    if (!!dual) {
-      return std::addressof(dual->t);
-    }
-    return nullptr;
-  }
-
-  void unlockPointerToDual() {
-  }
-};
-
-#else
+// template <class T, class Dual>
+// struct entangled {
+//   T t;
+//   entangled<Dual, T>* dual;
+//
+//   ~entangled() {
+//     if (!!dual) {
+//       dual->dual = nullptr;
+//     }
+//   }
+//   explicit entangled(T t) : t(std::move(t)), dual(nullptr) {}
+//   entangled(entangled&& o) : t(std::move(o.t)), dual(o.dual) {
+//     o.dual = nullptr;
+//     if (!!dual) {
+//       dual->dual = this;
+//     }
+//   }
+//
+//   entangled() = delete;
+//   entangled(const entangled&) = delete;
+//   entangled& operator=(const entangled&) = delete;
+//   entangled& operator=(entangled&&) = delete;
+//
+//   Dual* lockPointerToDual() {
+//     if (!!dual) {
+//       return std::addressof(dual->t);
+//     }
+//     return nullptr;
+//   }
+//
+//   void unlockPointerToDual() {
+//   }
+// };
 
 // This class can be used to keep a pair of values with pointers to each other
 // in sync, even when both objects are allowed to move. Ordinarily you'd do this
@@ -1498,17 +1495,98 @@ struct entangled {
     unlockBoth();
   }
 };
-#endif
+
+template <class First, class Second>
+using entangled_pair = std::pair<entangled<First, Second>, entangled<Second, First>>;
 
 template <class First, class Second>
 auto entangle(First f, Second s)
-    -> std::pair<entangled<First, Second>, entangled<Second, First>> {
+    -> entangled_pair<First, Second> {
   entangled<First, Second> ef(std::move(f));
   entangled<Second, First> es(std::move(s));
   ef.dual = std::addressof(es);
   es.dual = std::addressof(ef);
   return {std::move(ef), std::move(es)};
 }
+
+template <class T, class Dual>
+struct locked_entangled_pair : std::pair<T*, Dual*> {
+  entangled<T, Dual>* e;
+  ~locked_entangled_pair(){if (!!e) {e->unlockBoth();}}
+  explicit locked_entangled_pair(entangled<T, Dual>& e) : e(std::addressof(e)){
+    this->e->lockBoth();
+    this->first = std::addressof(this->e->t);
+    this->second = !!this->e->dual ? std::addressof(this->e->dual->t) : nullptr;
+  }
+  locked_entangled_pair() = delete;
+  locked_entangled_pair(const locked_entangled_pair&) = delete;
+  locked_entangled_pair& operator=(const locked_entangled_pair&) = delete;
+  locked_entangled_pair(locked_entangled_pair&& o) : std::pair<T*, Dual*>(o), e(o.e) {o.e = nullptr;};
+  locked_entangled_pair& operator=(locked_entangled_pair&& o){
+    static_cast<std::pair<T*, Dual*>&>(*this) = static_cast<std::pair<T*, Dual*>&&>(o);
+    e = o.e;
+    o.e = nullptr;
+    return *this;
+  }
+};
+
+template <class T, class Dual>
+locked_entangled_pair<T, Dual> lock_both(entangled<T, Dual>& e){
+  return locked_entangled_pair<T, Dual>{e};
+}
+
+template <class T, class Dual>
+struct shared_entangled : std::shared_ptr<T> {
+  Dual* dual;
+
+  template<class P>
+  explicit shared_entangled(std::shared_ptr<P>& p, T& t, Dual& d) : std::shared_ptr<T>(p, std::addressof(t)), dual(std::addressof(d)){
+  }
+  shared_entangled() = delete;
+  shared_entangled(const shared_entangled&) = delete;
+  shared_entangled& operator=(const shared_entangled&) = delete;
+  shared_entangled(shared_entangled&&) = default;
+  shared_entangled& operator=(shared_entangled&&) = default;
+};
+
+template <class First, class Second>
+using shared_entangled_pair = std::pair<shared_entangled<First, Second>, shared_entangled<Second, First>>;
+
+template <class First, class Second>
+auto shared_entangle(First f, Second s)
+    -> shared_entangled_pair<First, Second> {
+  auto p = std::make_shared<std::pair<First, Second>>(std::move(f), std::move(s));
+  shared_entangled<First, Second> ef(p, p->first, p->second);
+  shared_entangled<Second, First> es(p, p->second, p->first);
+  return {std::move(ef), std::move(es)};
+}
+
+template <class T, class Dual>
+struct locked_shared_entangled_pair : std::pair<T*, Dual*> {
+  shared_entangled<T, Dual> e;
+  explicit locked_shared_entangled_pair(shared_entangled<T, Dual>& e) : e(std::move(e)){
+    this->first = this->e.get();
+    this->second = this->e.dual;
+  }
+  locked_shared_entangled_pair() = delete;
+  locked_shared_entangled_pair(const locked_shared_entangled_pair&) = delete;
+  locked_shared_entangled_pair& operator=(const locked_shared_entangled_pair&) = delete;
+  locked_shared_entangled_pair(locked_shared_entangled_pair&&) = default;
+  locked_shared_entangled_pair& operator=(locked_shared_entangled_pair&&) = default;
+};
+
+
+template <class T, class Dual>
+locked_shared_entangled_pair<T, Dual> lock_both(shared_entangled<T, Dual>& e){
+  return locked_shared_entangled_pair<T, Dual>{e};
+}
+
+// external synchronization required for move and delete
+template<class T>
+struct moving_atomic : std::atomic<T> {
+  using std::atomic<T>::atomic;
+  moving_atomic(moving_atomic&& o) : std::atomic<T>(o.load()) {}
+};
 
 } // namespace pushmi
 //#pragma once
