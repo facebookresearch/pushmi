@@ -59,60 +59,30 @@ namespace detail {
     return async_fork_fn_data<Executor, Out>{std::move(out), std::move(ex)};
   }
 
+
   // Generic version
-  template<class Executor, class Data, class Value>
-  struct async_fork_on_value_impl {
-    void operator()(Executor exec, Data& data, Value&& value) {
-      ::pushmi::submit(
-        exec,
-        ::pushmi::now(exec),
-        ::pushmi::make_single(
-          [value = (Value&&) value,
-           out = std::move(static_cast<typename std::decay_t<Data>::out_t&>(data)),
-           exec](auto) mutable {
-            // Token hard coded for this executor type at the moment
-            auto token = InlineAsyncToken<
-                std::decay_t<decltype(value)>, std::decay_t<Executor>>{exec};
-            token.value_ = std::forward<Value>(value);
-            ::pushmi::set_value(out, std::move(token));
-          }
-        )
-      );
-    }
-  };
-
-  // Customisation for NewThreadAsyncToken
-  template<class Data, class Value>
-  struct async_fork_on_value_impl<new_thread_t, Data, Value> {
-    using out_t = typename std::decay_t<Data>::out_t;
-    void operator()(new_thread_t exec, Data& data, Value&& value) {
-      ::pushmi::submit(
-        exec,
-        ::pushmi::now(exec),
-        ::pushmi::make_single(
-          [value = (Value&&)value,
-           out = std::move(static_cast<out_t&>(data)),
-           exec](auto) mutable {
-            // Token hard coded for this executor type at the moment
-            auto token = NewThreadAsyncToken<
-                std::decay_t<decltype(value)>, std::decay_t<decltype(exec)>>{
-              exec};
-            token.dataPtr_->v_ = std::forward<Value>(value);
-            token.dataPtr_->flag_ = true;
-            ::pushmi::set_value(out, std::move(token));
-          }
-        )
-      );
-    }
-  };
-
-  struct async_fork_fn {
+  template<class Executor, class In>
+  struct async_fork_customization {
   private:
     struct value_fn {
-      template <class Data, class V>
-      void operator()(Data& data, V&& v) const {
+      template <class Data, class Value>
+      void operator()(Data& data, Value&& value) const {
         auto exec = data.exec;
-        async_fork_on_value_impl<decltype(exec), Data, V>{}(exec, data, (V&&) v);
+        ::pushmi::submit(
+          exec,
+          ::pushmi::now(exec),
+          ::pushmi::make_single(
+            [value = (Value&&) value,
+             out = std::move(static_cast<typename std::decay_t<Data>::out_t&>(data)),
+             exec](auto) mutable {
+              // Token hard coded for this executor type at the moment
+              auto token = InlineAsyncToken<
+                  std::decay_t<decltype(value)>, std::decay_t<Executor>>{exec};
+              token.value_ = std::forward<Value>(value);
+              ::pushmi::set_value(out, std::move(token));
+            }
+          )
+        );
       }
     };
     template <class Out>
@@ -157,6 +127,107 @@ namespace detail {
         );
       }
     };
+
+  public:
+    template<class Out>
+    auto operator()(Out out, Executor exec) {
+      return ::pushmi::detail::out_from_fn<In>()(
+        make_async_fork_fn_data(std::move(out), std::move(exec)),
+        // copy 'f' to allow multiple calls to submit
+        value_fn{},
+        error_fn<Out>{},
+        done_fn<Out>{}
+      );
+    }
+  };
+
+
+  // Customisation for NewThreadAsyncToken
+  template<class In>
+  struct async_fork_customization<new_thread_t, In> {
+  private:
+    using Executor = new_thread_t;
+    struct value_fn {
+      template <class Data, class Value>
+      void operator()(Data& data, Value&& value) const {
+        auto exec = data.exec;
+        ::pushmi::submit(
+          exec,
+          ::pushmi::now(exec),
+          ::pushmi::make_single(
+            [value = (Value&&)value,
+             out = std::move(static_cast<typename std::decay_t<Data>::out_t&>(data)),
+             exec](auto) mutable {
+              // Token hard coded for this executor type at the moment
+              auto token = NewThreadAsyncToken<
+                  std::decay_t<decltype(value)>, std::decay_t<decltype(exec)>>{
+                exec};
+              token.dataPtr_->v_ = std::forward<Value>(value);
+              token.dataPtr_->flag_ = true;
+              ::pushmi::set_value(out, std::move(token));
+            }
+          )
+        );
+      }
+    };
+    template <class Out>
+    struct error_fn {
+    private:
+      template <class E>
+      struct on_value_impl {
+        E e_;
+        Out out_;
+        void operator()(any) {
+          ::pushmi::set_error(out_, std::move(e_));
+        }
+      };
+    public:
+      template <class Data, class E>
+      void operator()(Data& data, E e) const noexcept {
+        ::pushmi::submit(
+          data.exec,
+          ::pushmi::now(data.exec),
+          ::pushmi::make_single(
+            on_value_impl<E>{std::move(e), std::move(static_cast<Out&>(data))}
+          )
+        );
+      }
+    };
+    template <class Out>
+    struct done_fn {
+      struct on_value_impl {
+        Out out_;
+        void operator()(any) {
+          ::pushmi::set_done(out_);
+        }
+      };
+      template <class Data>
+      void operator()(Data& data) const {
+        ::pushmi::submit(
+          data.exec,
+          ::pushmi::now(data.exec),
+          ::pushmi::make_single(
+            on_value_impl{std::move(static_cast<Out&>(data))}
+          )
+        );
+      }
+    };
+
+  public:
+    template<class Out>
+    auto operator()(Out out, Executor exec) {
+      return ::pushmi::detail::out_from_fn<In>()(
+        make_async_fork_fn_data(std::move(out), std::move(exec)),
+        // copy 'f' to allow multiple calls to submit
+        value_fn{},
+        error_fn<Out>{},
+        done_fn<Out>{}
+      );
+    }
+  };
+
+  struct async_fork_fn {
+  private:
     template <class ExecutorFactory, class In>
     struct out_impl {
       ExecutorFactory ef_;
@@ -165,13 +236,11 @@ namespace detail {
         (requires Receiver<Out>)
       auto operator()(Out out) const {
         auto exec = ef_();
-        return ::pushmi::detail::out_from_fn<In>()(
-          make_async_fork_fn_data(std::move(out), std::move(exec)),
-          // copy 'f' to allow multiple calls to submit
-          value_fn{},
-          error_fn<Out>{},
-          done_fn<Out>{}
-        );
+        // Call customization point for fork
+        // TODO: how should this actually customise.
+        // do we need the In parameter?
+        return async_fork_customization<std::decay_t<decltype(exec)>, In>{}(
+          out, exec);
       }
     };
     template <class ExecutorFactory>
