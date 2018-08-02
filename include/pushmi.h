@@ -6751,6 +6751,9 @@ namespace detail {
     }
   };
 
+  // Generalisation to customise the entire protocol
+  // TODO: The In template parameter here makes this customisation point
+  // seem strange
   template<class In, class Executor, class Out>
   auto async_fork_customization(Executor exec, Out out) {
     return async_fork_customization_generic<Executor, In>{}(out, exec);
@@ -6880,6 +6883,9 @@ namespace detail {
     }
   };
 
+  // TODO: This should be transformed to use a single customisation point as for
+  // fork. To do this we need to get the executor consistently rather than
+  // getting it from the value method.
   struct async_join_fn {
   private:
     struct value_fn {
@@ -7006,6 +7012,9 @@ namespace detail {
     }
   };
 
+  // TODO: This should be transformed to use a single customisation point as for
+  // fork. To do this we need to get the executor consistently rather than
+  // getting it from the value method.
   struct async_transform_fn {
   private:
     template <class F>
@@ -7095,6 +7104,10 @@ namespace detail {
     }
   };
 
+
+  // TODO: This should be transformed to use a single customisation point as for
+  // fork. To do this we need to get the executor consistently rather than
+  // getting it from the value method.
   struct async_bulk_fn {
   private:
     template <class ValueFunction, class ShapeF, class SharedF, class ResultS>
