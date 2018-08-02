@@ -48,6 +48,7 @@ set(header_files
     "${CMAKE_CURRENT_SOURCE_DIR}/include/pushmi/o/extension_operators.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/pushmi/o/submit.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/pushmi/subject.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/pushmi/o/async.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/pushmi/o/empty.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/pushmi/o/from.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/pushmi/o/just.h"
