@@ -13,6 +13,7 @@
 
 #include "concepts.h"
 #include "traits.h"
+#include "detail/functional.h"
 
 namespace pushmi {
 
@@ -34,17 +35,21 @@ struct construct_deduced<none>;
 template<>
 struct construct_deduced<single>;
 
+template<>
+struct construct_deduced<many>;
+
+template<>
+struct construct_deduced<flow_single>;
+
 template <template <class...> class T, class... AN>
 using deduced_type_t = pushmi::invoke_result_t<construct_deduced<T>, AN...>;
 
 struct ignoreVF {
-  template <class V>
-  void operator()(V&&) {}
+  void operator()(detail::any) {}
 };
 
 struct abortEF {
-  template <class E>
-  void operator()(E &&) noexcept {
+  void operator()(detail::any) noexcept {
     std::abort();
   }
 };
@@ -53,21 +58,18 @@ struct ignoreDF {
   void operator()() {}
 };
 
-struct ignoreStpF {
-  void operator()() {}
+struct ignoreNF {
+  void operator()(detail::any) {}
 };
 
 struct ignoreStrtF {
-  template <class Up>
-  void operator()(Up&) {}
+  void operator()(detail::any) {}
 };
 
 
 struct ignoreSF {
-  template <class Out>
-  void operator()(Out) {}
-  template <class TP, class Out>
-  void operator()(TP, Out) {}
+  void operator()(detail::any) {}
+  void operator()(detail::any, detail::any) {}
 };
 
 struct systemNowF {
@@ -100,21 +102,23 @@ struct passDDF {
   }
 };
 
-struct passDStpF {
-  PUSHMI_TEMPLATE(class Data)
-    (requires Receiver<Data>)
-  void operator()(Data& out) const {
-    ::pushmi::set_stopping(out);
+struct passDNXF {
+  PUSHMI_TEMPLATE(class V, class Data)
+    (requires requires (
+      ::pushmi::set_next(std::declval<Data&>(), std::declval<V>())
+    ) && Receiver<Data>)
+  void operator()(Data& out, V&& v) const {
+    ::pushmi::set_next(out, (V&&) v);
   }
 };
 
 struct passDStrtF {
   PUSHMI_TEMPLATE(class Up, class Data)
     (requires requires (
-      ::pushmi::set_starting(std::declval<Data&>(), std::declval<Up&>())
+      ::pushmi::set_starting(std::declval<Data&>(), std::declval<Up>())
     ) && Receiver<Data>)
-  void operator()(Data& out, Up& up) const {
-    ::pushmi::set_starting(out, up);
+  void operator()(Data& out, Up&& up) const {
+    ::pushmi::set_starting(out, (Up&&) up);
   }
 };
 
@@ -184,15 +188,15 @@ public:
   constexpr overload_fn(Fn fn, Fns... fns)
       : fns_{std::move(fn), overload_fn<Fns...>{std::move(fns)...}} {}
   PUSHMI_TEMPLATE (class... Args)
-    (requires defer::Invocable<Fn&, Args...> ||
-      defer::Invocable<overload_fn<Fns...>&, Args...>)
+    (requires lazy::Invocable<Fn&, Args...> ||
+      lazy::Invocable<overload_fn<Fns...>&, Args...>)
   decltype(auto) operator()(Args &&... args) PUSHMI_NOEXCEPT_AUTO(
       std::declval<_which_t<Invocable<Fn&, Args...>>&>()(std::declval<Args>()...)) {
     return std::get<!Invocable<Fn&, Args...>>(fns_)((Args &&) args...);
   }
   PUSHMI_TEMPLATE (class... Args)
-    (requires defer::Invocable<const Fn&, Args...> ||
-      defer::Invocable<const overload_fn<Fns...>&, Args...>)
+    (requires lazy::Invocable<const Fn&, Args...> ||
+      lazy::Invocable<const overload_fn<Fns...>&, Args...>)
   decltype(auto) operator()(Args &&... args) const PUSHMI_NOEXCEPT_AUTO(
       std::declval<const _which_t<Invocable<const Fn&, Args...>>&>()(std::declval<Args>()...)) {
     return std::get<!Invocable<const Fn&, Args...>>(fns_)((Args &&) args...);
@@ -240,16 +244,15 @@ auto on_done(Fn fn) -> on_done_fn<Fn> {
   return on_done_fn<Fn>{std::move(fn)};
 }
 
-template <class Fn>
-struct on_stopping_fn : Fn {
-  constexpr on_stopping_fn() = default;
-  constexpr explicit on_stopping_fn(Fn fn) : Fn(std::move(fn)) {}
-  using Fn::operator();
+template <class... Fns>
+struct on_next_fn : overload_fn<Fns...> {
+  constexpr on_next_fn() = default;
+  using overload_fn<Fns...>::overload_fn;
 };
 
-template <class Fn>
-auto on_stopping(Fn fn) -> on_stopping_fn<Fn> {
-  return on_stopping_fn<Fn>{std::move(fn)};
+template <class... Fns>
+auto on_next(Fns... fns) -> on_next_fn<Fns...> {
+  return on_next_fn<Fns...>{std::move(fns)...};
 }
 
 template <class... Fns>

@@ -24,14 +24,12 @@ class flow_single<V, PE, E> {
     static void s_done(data&) {}
     static void s_error(data&, E) noexcept { std::terminate(); }
     static void s_value(data&, V) {}
-    static void s_stopping(data&) noexcept {}
-    static void s_starting(data&, any_none<PE>&) {}
+    static void s_starting(data&, any_none<PE>) {}
     void (*op_)(data&, data*) = vtable::s_op;
     void (*done_)(data&) = vtable::s_done;
     void (*error_)(data&, E) noexcept = vtable::s_error;
     void (*value_)(data&, V) = vtable::s_value;
-    void (*stopping_)(data&) noexcept = vtable::s_stopping;
-    void (*starting_)(data&, any_none<PE>&) = vtable::s_starting;
+    void (*starting_)(data&, any_none<PE>) = vtable::s_starting;
   };
   static constexpr vtable const noop_ {};
   vtable const* vptr_ = &noop_;
@@ -52,14 +50,11 @@ class flow_single<V, PE, E> {
       static void value(data& src, V v) {
         ::pushmi::set_value(*static_cast<Wrapped*>(src.pobj_), std::move(v));
       }
-      static void stopping(data& src) noexcept {
-        ::pushmi::set_stopping(*static_cast<Wrapped*>(src.pobj_));
-      }
-      static void starting(data& src, any_none<PE>& up) {
-        ::pushmi::set_starting(*static_cast<Wrapped*>(src.pobj_), up);
+      static void starting(data& src, any_none<PE> up) {
+        ::pushmi::set_starting(*static_cast<Wrapped*>(src.pobj_), std::move(up));
       }
     };
-    static const vtable vtbl{s::op, s::done, s::error, s::value, s::stopping, s::starting};
+    static const vtable vtbl{s::op, s::done, s::error, s::value, s::starting};
     data_.pobj_ = new Wrapped(std::move(obj));
     vptr_ = &vtbl;
   }
@@ -83,14 +78,11 @@ class flow_single<V, PE, E> {
         ::pushmi::set_value(
             *static_cast<Wrapped*>((void*)src.buffer_), std::move(v));
       }
-      static void stopping(data& src) noexcept {
-        ::pushmi::set_stopping(*static_cast<Wrapped*>((void*)src.buffer_));
-      }
-      static void starting(data& src, any_none<PE>& up) {
-        ::pushmi::set_starting(*static_cast<Wrapped*>((void*)src.buffer_), up);
+      static void starting(data& src, any_none<PE> up) {
+        ::pushmi::set_starting(*static_cast<Wrapped*>((void*)src.buffer_), std::move(up));
       }
     };
-    static const vtable vtbl{s::op, s::done, s::error, s::value, s::stopping, s::starting};
+    static const vtable vtbl{s::op, s::done, s::error, s::value, s::starting};
     new (data_.buffer_) Wrapped(std::move(obj));
     vptr_ = &vtbl;
   }
@@ -127,11 +119,8 @@ public:
     vptr_->done_(data_);
   }
 
-  void stopping() noexcept {
-    vptr_->stopping_(data_);
-  }
-  void starting(any_none<PE>& up) {
-    vptr_->starting_(data_, up);
+  void starting(any_none<PE> up) {
+    vptr_->starting_(data_, std::move(up));
   }
 };
 
@@ -140,15 +129,14 @@ template <class V, class PE, class E>
 constexpr typename flow_single<V, PE, E>::vtable const
   flow_single<V, PE, E>::noop_;
 
-template <class VF, class EF, class DF, class StpF, class StrtF>
+template <class VF, class EF, class DF, class StrtF>
 #if __cpp_concepts
   requires Invocable<DF&>
 #endif
-class flow_single<VF, EF, DF, StpF, StrtF> {
+class flow_single<VF, EF, DF, StrtF> {
   VF vf_;
   EF ef_;
   DF df_;
-  StpF stpf_;
   StrtF strtf_;
 
  public:
@@ -174,12 +162,10 @@ class flow_single<VF, EF, DF, StpF, StrtF> {
       VF vf,
       EF ef,
       DF df = DF{},
-      StpF stpf = StpF{},
       StrtF strtf = StrtF{})
       : vf_(std::move(vf)),
         ef_(std::move(ef)),
         df_(std::move(df)),
-        stpf_(std::move(stpf)),
         strtf_(std::move(strtf)) {}
   PUSHMI_TEMPLATE (class V)
     (requires Invocable<VF&, V>)
@@ -195,13 +181,10 @@ class flow_single<VF, EF, DF, StpF, StrtF> {
   void done() {
     df_();
   }
-  void stopping() noexcept {
-    stpf_();
-  }
   PUSHMI_TEMPLATE(class Up)
-    (requires Receiver<Up, is_none<>> && Invocable<StrtF&, Up&>)
-  void starting(Up& up) {
-    strtf_(up);
+    (requires Receiver<Up, is_none<>> && Invocable<StrtF&, Up&&>)
+  void starting(Up&& up) {
+    strtf_( (Up &&) up);
   }
 };
 
@@ -210,17 +193,15 @@ template<
     class DVF,
     class DEF,
     class DDF,
-    class DStpF,
     class DStrtF>
 #if __cpp_concepts
   requires Invocable<DDF&, Data&>
 #endif
-class flow_single<Data, DVF, DEF, DDF, DStpF, DStrtF> {
+class flow_single<Data, DVF, DEF, DDF, DStrtF> {
   Data data_;
   DVF vf_;
   DEF ef_;
   DDF df_;
-  DStpF stpf_;
   DStrtF strtf_;
 
  public:
@@ -244,13 +225,11 @@ class flow_single<Data, DVF, DEF, DDF, DStpF, DStrtF> {
       DVF vf,
       DEF ef = DEF{},
       DDF df = DDF{},
-      DStpF stpf = DStpF{},
       DStrtF strtf = DStrtF{})
       : data_(std::move(d)),
         vf_(vf),
         ef_(ef),
         df_(df),
-        stpf_(std::move(stpf)),
         strtf_(std::move(strtf)) {}
   PUSHMI_TEMPLATE (class V)
     (requires Invocable<DVF&, Data&, V>)
@@ -267,19 +246,16 @@ class flow_single<Data, DVF, DEF, DDF, DStpF, DStrtF> {
   void done() {
     df_(data_);
   }
-  void stopping() noexcept {
-    stpf_(data_);
-  }
   PUSHMI_TEMPLATE (class Up)
-    (requires Invocable<DStrtF&, Data&, Up&>)
-  void starting(Up& up) {
-    strtf_(data_, up);
+    (requires Invocable<DStrtF&, Data&, Up&&>)
+  void starting(Up&& up) {
+    strtf_(data_, (Up &&) up);
   }
 };
 
 template <>
 class flow_single<>
-    : public flow_single<ignoreVF, abortEF, ignoreDF, ignoreStpF, ignoreStrtF> {
+    : public flow_single<ignoreVF, abortEF, ignoreDF, ignoreStrtF> {
 };
 
 // TODO winnow down the number of make_flow_single overloads and deduction
@@ -292,113 +268,90 @@ PUSHMI_INLINE_VAR constexpr struct make_flow_single_fn {
     return flow_single<>{};
   }
   PUSHMI_TEMPLATE (class VF)
-    (requires not Receiver<VF> && !detail::is_v<VF, on_error_fn> &&
-      !detail::is_v<VF, on_done_fn>)
+    (requires PUSHMI_EXP(lazy::True<> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Receiver<VF> PUSHMI_AND not lazy::Invocable<VF&>)))
   auto operator()(VF vf) const {
-    return flow_single<VF, abortEF, ignoreDF, ignoreStpF, ignoreStrtF>{
+    return flow_single<VF, abortEF, ignoreDF, ignoreStrtF>{
       std::move(vf)};
   }
   template <class... EFN>
   auto operator()(on_error_fn<EFN...> ef) const {
-    return flow_single<ignoreVF, on_error_fn<EFN...>, ignoreDF, ignoreStpF, ignoreStrtF>{
+    return flow_single<ignoreVF, on_error_fn<EFN...>, ignoreDF, ignoreStrtF>{
       std::move(ef)};
   }
-  template <class DF>
-  auto operator()(on_done_fn<DF> df) const {
-    return flow_single<ignoreVF, abortEF, on_done_fn<DF>, ignoreStpF, ignoreStrtF>{
-        std::move(df)};
-  }
-  PUSHMI_TEMPLATE (class V, class PE, class E, class Wrapped)
-    (requires FlowSingleReceiver<Wrapped, V, PE, E> &&
-      !detail::is_v<Wrapped, none>)
-  auto operator()(Wrapped w) const {
-    return flow_single<V, PE, E>{std::move(w)};
+  PUSHMI_TEMPLATE(class DF)
+    (requires PUSHMI_EXP(lazy::True<> PUSHMI_AND lazy::Invocable<DF&> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Receiver<DF>)))
+  auto operator()(DF df) const {
+    return flow_single<ignoreVF, abortEF, DF, ignoreStrtF>{std::move(df)};
   }
   PUSHMI_TEMPLATE (class VF, class EF)
-    (requires not Receiver<VF> && !detail::is_v<VF, on_error_fn> &&
-      !detail::is_v<VF, on_done_fn> && !detail::is_v<EF, on_value_fn> &&
-      !detail::is_v<EF, on_done_fn>)
+    (requires PUSHMI_EXP(lazy::True<> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Receiver<VF> PUSHMI_AND not lazy::Invocable<EF&>)))
   auto operator()(VF vf, EF ef) const {
-    return flow_single<VF, EF, ignoreDF, ignoreStpF, ignoreStrtF>{std::move(vf),
+    return flow_single<VF, EF, ignoreDF, ignoreStrtF>{std::move(vf),
       std::move(ef)};
   }
-  template <class... EFN, class DF>
-  auto operator()(on_error_fn<EFN...> ef, on_done_fn<DF> df) const {
-    return flow_single<ignoreVF, on_error_fn<EFN...>, on_done_fn<DF>, ignoreStpF, ignoreStrtF>{
-      std::move(ef), std::move(df)};
+  PUSHMI_TEMPLATE(class EF, class DF)
+    (requires PUSHMI_EXP(lazy::True<> PUSHMI_AND lazy::Invocable<DF&> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Receiver<EF>)))
+  auto operator()(EF ef, DF df) const {
+    return flow_single<ignoreVF, EF, DF, ignoreStrtF>{std::move(ef), std::move(df)};
   }
   PUSHMI_TEMPLATE (class VF, class EF, class DF)
-    (requires Invocable<DF&>)
+    (requires PUSHMI_EXP(lazy::Invocable<DF&> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Receiver<VF>)))
   auto operator()(VF vf, EF ef, DF df) const {
-    return flow_single<VF, EF, DF, ignoreStpF, ignoreStrtF>{std::move(vf),
+    return flow_single<VF, EF, DF, ignoreStrtF>{std::move(vf),
       std::move(ef), std::move(df)};
   }
-  PUSHMI_TEMPLATE (class VF, class EF, class DF, class StpF)
-    (requires Invocable<DF&> && Invocable<StpF&>)
-  auto operator()(VF vf, EF ef, DF df, StpF stpf) const {
-    return flow_single<VF, EF, DF, StpF, ignoreStrtF>{std::move(vf),
-      std::move(ef), std::move(df), std::move(stpf)};
-  }
-  PUSHMI_TEMPLATE (class VF, class EF, class DF, class StpF, class StrtF)
-    (requires Invocable<DF&> && Invocable<StpF&>)
-  auto operator()(VF vf, EF ef, DF df, StpF stpf, StrtF strtf) const {
-    return flow_single<VF, EF, DF, StpF, StrtF>{std::move(vf), std::move(ef),
-      std::move(df), std::move(stpf), std::move(strtf)};
+  PUSHMI_TEMPLATE (class VF, class EF, class DF, class StrtF)
+    (requires PUSHMI_EXP(lazy::Invocable<DF&> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Receiver<VF>)))
+  auto operator()(VF vf, EF ef, DF df, StrtF strtf) const {
+    return flow_single<VF, EF, DF, StrtF>{std::move(vf), std::move(ef),
+      std::move(df), std::move(strtf)};
   }
   PUSHMI_TEMPLATE(class Data)
-    (requires Receiver<Data>)
+    (requires PUSHMI_EXP(lazy::True<> PUSHMI_AND lazy::Receiver<Data>))
   auto operator()(Data d) const {
-    return flow_single<Data, passDVF, passDEF, passDDF, passDStpF, passDStrtF>{
+    return flow_single<Data, passDVF, passDEF, passDDF, passDStrtF>{
         std::move(d)};
   }
   PUSHMI_TEMPLATE(class Data, class DVF)
-    (requires Receiver<Data> && !detail::is_v<DVF, on_error_fn> &&
-      !detail::is_v<DVF, on_done_fn>)
+    (requires PUSHMI_EXP(lazy::True<> PUSHMI_AND lazy::Receiver<Data> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Invocable<DVF&, Data&>)))
   auto operator()(Data d, DVF vf) const {
-    return flow_single<Data, DVF, passDEF, passDDF, passDStpF, passDStrtF>{
+    return flow_single<Data, DVF, passDEF, passDDF, passDStrtF>{
       std::move(d), std::move(vf)};
   }
   PUSHMI_TEMPLATE(class Data, class... DEFN)
-    (requires Receiver<Data>)
+    (requires PUSHMI_EXP(lazy::Receiver<Data>))
   auto operator()(Data d, on_error_fn<DEFN...> ef) const {
-    return flow_single<Data, passDVF, on_error_fn<DEFN...>, passDDF, passDStpF, passDStrtF>{
+    return flow_single<Data, passDVF, on_error_fn<DEFN...>, passDDF, passDStrtF>{
       std::move(d), std::move(ef)};
   }
-  PUSHMI_TEMPLATE(class Data, class DVF, class DEF)
-    (requires Receiver<Data> && !detail::is_v<DVF, on_error_fn> &&
-      !detail::is_v<DVF, on_done_fn> && !detail::is_v<DEF, on_done_fn>)
-  auto operator()(Data d, DVF vf, DEF ef) const {
-    return flow_single<Data, DVF, DEF, passDDF, passDStpF, passDStrtF>{std::move(d), std::move(vf), std::move(ef)};
-  }
-  PUSHMI_TEMPLATE(class Data, class... DEFN, class DDF)
-    (requires Receiver<Data>)
-  auto operator()(Data d, on_error_fn<DEFN...> ef, on_done_fn<DDF> df) const {
-    return flow_single<Data, passDVF, on_error_fn<DEFN...>, on_done_fn<DDF>, passDStpF, passDStrtF>{
-      std::move(d), std::move(ef), std::move(df)};
-  }
   PUSHMI_TEMPLATE(class Data, class DDF)
-    (requires Receiver<Data>)
-  auto operator()(Data d, on_done_fn<DDF> df) const {
-    return flow_single<Data, passDVF, passDEF, on_done_fn<DDF>, passDStpF, passDStrtF>{
+    (requires PUSHMI_EXP(lazy::True<> PUSHMI_AND lazy::Receiver<Data> PUSHMI_AND lazy::Invocable<DDF&, Data&>))
+  auto operator()(Data d, DDF df) const {
+    return flow_single<Data, passDVF, passDEF, DDF, passDStrtF>{
       std::move(d), std::move(df)};
   }
+  PUSHMI_TEMPLATE(class Data, class DVF, class DEF)
+    (requires PUSHMI_EXP(lazy::Receiver<Data> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Invocable<DEF&, Data&>)))
+  auto operator()(Data d, DVF vf, DEF ef) const {
+    return flow_single<Data, DVF, DEF, passDDF, passDStrtF>{std::move(d), std::move(vf), std::move(ef)};
+  }
+  PUSHMI_TEMPLATE(class Data, class DEF, class DDF)
+    (requires PUSHMI_EXP(lazy::Receiver<Data> PUSHMI_AND lazy::Invocable<DDF&, Data&>))
+  auto operator()(Data d, DEF ef, DDF df) const {
+    return flow_single<Data, passDVF, DEF, DDF, passDStrtF>{
+      std::move(d), std::move(ef), std::move(df)};
+  }
   PUSHMI_TEMPLATE(class Data, class DVF, class DEF, class DDF)
-    (requires Receiver<Data> && Invocable<DDF&, Data&>)
+    (requires PUSHMI_EXP(lazy::Receiver<Data> PUSHMI_AND lazy::Invocable<DDF&, Data&>))
   auto operator()(Data d, DVF vf, DEF ef, DDF df) const {
-    return flow_single<Data, DVF, DEF, DDF, passDStpF, passDStrtF>{std::move(d),
+    return flow_single<Data, DVF, DEF, DDF, passDStrtF>{std::move(d),
       std::move(vf), std::move(ef), std::move(df)};
   }
-  PUSHMI_TEMPLATE(class Data, class DVF, class DEF, class DDF, class DStpF)
-    (requires Receiver<Data> && Invocable<DDF&, Data&> && Invocable<DStpF&, Data&>)
-  auto operator()(Data d, DVF vf, DEF ef, DDF df, DStpF stpf) const {
-    return flow_single<Data, DVF, DEF, DDF, DStpF, passDStrtF>{std::move(d),
-      std::move(vf), std::move(ef), std::move(df), std::move(stpf)};
-  }
-  PUSHMI_TEMPLATE(class Data, class DVF, class DEF, class DDF, class DStpF, class DStrtF)
-    (requires Receiver<Data> && Invocable<DDF&, Data&> && Invocable<DStpF&, Data&>)
-  auto operator()(Data d, DVF vf, DEF ef, DDF df, DStpF stpf, DStrtF strtf) const {
-    return flow_single<Data, DVF, DEF, DDF, DStpF, DStrtF>{std::move(d),
-      std::move(vf), std::move(ef), std::move(df), std::move(stpf), std::move(strtf)};
+  PUSHMI_TEMPLATE(class Data, class DVF, class DEF, class DDF, class DStrtF)
+    (requires PUSHMI_EXP(lazy::Receiver<Data> PUSHMI_AND lazy::Invocable<DDF&, Data&>))
+  auto operator()(Data d, DVF vf, DEF ef, DDF df, DStrtF strtf) const {
+    return flow_single<Data, DVF, DEF, DDF, DStrtF>{std::move(d),
+      std::move(vf), std::move(ef), std::move(df), std::move(strtf)};
   }
 } const make_flow_single {};
 
@@ -408,128 +361,90 @@ PUSHMI_INLINE_VAR constexpr struct make_flow_single_fn {
 flow_single() -> flow_single<>;
 
 PUSHMI_TEMPLATE(class VF)
-  (requires not Receiver<VF> && !detail::is_v<VF, on_error_fn> &&
-    !detail::is_v<VF, on_done_fn>)
-flow_single(VF)
-         -> flow_single<VF, abortEF, ignoreDF, ignoreStpF, ignoreStrtF>;
+  (requires PUSHMI_EXP(lazy::True<> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Receiver<VF> PUSHMI_AND not lazy::Invocable<VF&>)))
+flow_single(VF) ->
+  flow_single<VF, abortEF, ignoreDF, ignoreStrtF>;
 
 template <class... EFN>
-flow_single(on_error_fn<EFN...>)
-    -> flow_single<
-        ignoreVF,
-        on_error_fn<EFN...>,
-        ignoreDF,
-        ignoreStpF,
-        ignoreStrtF>;
+flow_single(on_error_fn<EFN...>) ->
+  flow_single<ignoreVF, on_error_fn<EFN...>, ignoreDF, ignoreStrtF>;
 
-template <class DF>
-flow_single(on_done_fn<DF>)
-    -> flow_single<ignoreVF, abortEF, on_done_fn<DF>, ignoreStpF, ignoreStrtF>;
-
-PUSHMI_TEMPLATE(class V, class PE, class E, class Wrapped)
-  (requires FlowSingleReceiver<Wrapped, V, PE, E> &&
-    !detail::is_v<Wrapped, none>)
-flow_single(Wrapped) -> flow_single<V, PE, E>;
+PUSHMI_TEMPLATE(class DF)
+  (requires PUSHMI_EXP(lazy::True<> PUSHMI_AND lazy::Invocable<DF&> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Receiver<DF>)))
+flow_single(DF) ->
+  flow_single<ignoreVF, abortEF, DF, ignoreStrtF>;
 
 PUSHMI_TEMPLATE(class VF, class EF)
-  (requires not Receiver<VF> && !detail::is_v<VF, on_error_fn> &&
-    !detail::is_v<VF, on_done_fn> && !detail::is_v<EF, on_value_fn> &&
-    !detail::is_v<EF, on_done_fn>)
-flow_single(VF, EF)
-         -> flow_single<VF, EF, ignoreDF, ignoreStpF, ignoreStrtF>;
+  (requires PUSHMI_EXP(lazy::True<> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Receiver<VF> PUSHMI_AND not lazy::Invocable<EF&>)))
+flow_single(VF, EF) ->
+  flow_single<VF, EF, ignoreDF, ignoreStrtF>;
 
-template <class... EFN, class DF>
-flow_single(on_error_fn<EFN...>, on_done_fn<DF>)
-    -> flow_single<
-        ignoreVF,
-        on_error_fn<EFN...>,
-        on_done_fn<DF>,
-        ignoreStpF,
-        ignoreStrtF>;
+PUSHMI_TEMPLATE(class EF, class DF)
+  (requires PUSHMI_EXP(lazy::True<> PUSHMI_AND lazy::Invocable<DF&> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Receiver<EF>)))
+flow_single(EF, DF) ->
+  flow_single<ignoreVF, EF, DF, ignoreStrtF>;
 
 PUSHMI_TEMPLATE(class VF, class EF, class DF)
-  (requires Invocable<DF&>)
-flow_single(VF, EF, DF)
-    -> flow_single<VF, EF, DF, ignoreStpF, ignoreStrtF>;
+  (requires PUSHMI_EXP(lazy::Invocable<DF&> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Receiver<VF>)))
+flow_single(VF, EF, DF) ->
+  flow_single<VF, EF, DF, ignoreStrtF>;
 
-PUSHMI_TEMPLATE(class VF, class EF, class DF, class StpF)
-  (requires Invocable<DF&> && Invocable<StpF&>)
-flow_single(VF, EF, DF, StpF)
-    -> flow_single<VF, EF, DF, StpF, ignoreStrtF>;
-
-PUSHMI_TEMPLATE(class VF, class EF, class DF, class StpF, class StrtF)
-  (requires Invocable<DF&> && Invocable<StpF&>)
-flow_single(VF, EF, DF, StpF, StrtF)
-    -> flow_single<VF, EF, DF, StpF, StrtF>;
+PUSHMI_TEMPLATE(class VF, class EF, class DF, class StrtF)
+  (requires PUSHMI_EXP(lazy::Invocable<DF&> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Receiver<VF>)))
+flow_single(VF, EF, DF, StrtF) ->
+  flow_single<VF, EF, DF, StrtF>;
 
 PUSHMI_TEMPLATE(class Data)
-  (requires Receiver<Data>)
-flow_single(Data d)
-    -> flow_single<Data, passDVF, passDEF, passDDF, passDStpF, passDStrtF>;
+  (requires PUSHMI_EXP(lazy::True<> PUSHMI_AND lazy::Receiver<Data>))
+flow_single(Data d) ->
+  flow_single<Data, passDVF, passDEF, passDDF, passDStrtF>;
 
 PUSHMI_TEMPLATE(class Data, class DVF)
-  (requires Receiver<Data> && !detail::is_v<DVF, on_error_fn> &&
-    !detail::is_v<DVF, on_done_fn>)
-flow_single(Data d, DVF vf)
-         -> flow_single<Data, DVF, passDEF, passDDF, passDStpF, passDStrtF>;
+  (requires PUSHMI_EXP(lazy::True<> PUSHMI_AND lazy::Receiver<Data> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Invocable<DVF&, Data&>)))
+flow_single(Data d, DVF vf) ->
+  flow_single<Data, DVF, passDEF, passDDF, passDStrtF>;
 
 PUSHMI_TEMPLATE(class Data, class... DEFN)
-  (requires Receiver<Data>)
-flow_single(Data d, on_error_fn<DEFN...>)
-    -> flow_single<
-        Data,
-        passDVF,
-        on_error_fn<DEFN...>,
-        passDDF,
-        passDStpF,
-        passDStrtF>;
-
-PUSHMI_TEMPLATE(class Data, class DVF, class DEF)
-  (requires Receiver<Data> && !detail::is_v<DVF, on_error_fn> &&
-    !detail::is_v<DVF, on_done_fn> && !detail::is_v<DEF, on_done_fn>)
-flow_single(Data d, DVF vf, DEF ef)
-         -> flow_single<Data, DVF, DEF, passDDF, passDStpF, passDStrtF>;
-
-PUSHMI_TEMPLATE(class Data, class... DEFN, class DDF)
-  (requires Receiver<Data>)
-flow_single(Data d, on_error_fn<DEFN...>, on_done_fn<DDF>)
-    -> flow_single<
-        Data,
-        passDVF,
-        on_error_fn<DEFN...>,
-        on_done_fn<DDF>,
-        passDStpF,
-        passDStrtF>;
+  (requires PUSHMI_EXP(lazy::Receiver<Data>))
+flow_single(Data d, on_error_fn<DEFN...>) ->
+  flow_single<Data, passDVF, on_error_fn<DEFN...>, passDDF, passDStrtF>;
 
 PUSHMI_TEMPLATE(class Data, class DDF)
-  (requires Receiver<Data>)
-flow_single(Data d, on_done_fn<DDF>)
-    -> flow_single<Data, passDVF, passDEF, on_done_fn<DDF>, passDStpF, passDStrtF>;
+  (requires PUSHMI_EXP(lazy::True<> PUSHMI_AND lazy::Receiver<Data> PUSHMI_AND lazy::Invocable<DDF&, Data&>))
+flow_single(Data d, DDF) ->
+    flow_single<Data, passDVF, passDEF, DDF, passDStrtF>;
+
+PUSHMI_TEMPLATE(class Data, class DVF, class DEF)
+  (requires PUSHMI_EXP(lazy::Receiver<Data> PUSHMI_BROKEN_SUBSUMPTION(PUSHMI_AND not lazy::Invocable<DEF&, Data&>)))
+flow_single(Data d, DVF vf, DEF ef) ->
+  flow_single<Data, DVF, DEF, passDDF, passDStrtF>;
+
+PUSHMI_TEMPLATE(class Data, class DEF, class DDF)
+  (requires PUSHMI_EXP(lazy::Receiver<Data> PUSHMI_AND lazy::Invocable<DDF&, Data&>))
+flow_single(Data d, DEF, DDF) ->
+  flow_single<Data, passDVF, DEF, DDF, passDStrtF>;
 
 PUSHMI_TEMPLATE(class Data, class DVF, class DEF, class DDF)
-  (requires Receiver<Data> &&  Invocable<DDF&, Data&>)
-flow_single(Data d, DVF vf, DEF ef, DDF df)
-    -> flow_single<Data, DVF, DEF, DDF, passDStpF, passDStrtF>;
+  (requires PUSHMI_EXP(lazy::Receiver<Data> PUSHMI_AND lazy::Invocable<DDF&, Data&>))
+flow_single(Data d, DVF vf, DEF ef, DDF df) ->
+  flow_single<Data, DVF, DEF, DDF, passDStrtF>;
 
-PUSHMI_TEMPLATE(class Data, class DVF, class DEF, class DDF, class DStpF)
-  (requires Receiver<Data> &&  Invocable<DDF&, Data&> && Invocable<DStpF&, Data&>)
-flow_single(Data d, DVF vf, DEF ef, DDF df, DStpF stpf)
-    -> flow_single<Data, DVF, DEF, DDF, DStpF, passDStrtF>;
-
-PUSHMI_TEMPLATE(
-    class Data,
-    class DVF,
-    class DEF,
-    class DDF,
-    class DStpF,
-    class DStrtF)
-  (requires Receiver<Data> && Invocable<DDF&, Data&> && Invocable<DStpF&, Data&>)
-flow_single(Data d, DVF vf, DEF ef, DDF df, DStpF stpf, DStrtF strtf)
-    -> flow_single<Data, DVF, DEF, DDF, DStpF, DStrtF>;
+PUSHMI_TEMPLATE(class Data, class DVF, class DEF, class DDF, class DStrtF)
+  (requires PUSHMI_EXP(lazy::Receiver<Data> PUSHMI_AND lazy::Invocable<DDF&, Data&> ))
+flow_single(Data d, DVF vf, DEF ef, DDF df, DStrtF strtf) ->
+  flow_single<Data, DVF, DEF, DDF, DStrtF>;
 #endif
 
 template <class V, class PE = std::exception_ptr, class E = PE>
 using any_flow_single = flow_single<V, PE, E>;
+
+template<>
+struct construct_deduced<flow_single> {
+  template<class... AN>
+  auto operator()(AN&&... an) const -> decltype(pushmi::make_flow_single((AN&&) an...)) {
+    return pushmi::make_flow_single((AN&&) an...);
+  }
+};
 
 // template <class V, class PE = std::exception_ptr, class E = PE, class Wrapped>
 //     requires FlowSingleReceiver<Wrapped, V, PE, E> && !detail::is_v<Wrapped, none> &&
