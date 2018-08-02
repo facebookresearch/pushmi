@@ -62,7 +62,7 @@ namespace detail {
 
   // Generic version
   template<class Executor, class In>
-  struct async_fork_customization {
+  struct async_fork_customization_generic {
   private:
     struct value_fn {
       template <class Data, class Value>
@@ -144,7 +144,7 @@ namespace detail {
 
   // Customisation for NewThreadAsyncToken
   template<class In>
-  struct async_fork_customization<new_thread_t, In> {
+  struct async_fork_customization_new_thread_t {
   private:
     using Executor = new_thread_t;
     struct value_fn {
@@ -226,6 +226,19 @@ namespace detail {
     }
   };
 
+  // Generalisation to customise the entire protocol
+  // TODO: The In template parameter here makes this customisation point
+  // seem strange
+  template<class In, class Executor, class Out>
+  auto async_fork_customization(Executor exec, Out out) {
+    return async_fork_customization_generic<Executor, In>{}(out, exec);
+  }
+
+  template<class In, class Out>
+  auto async_fork_customization(new_thread_t exec,  Out out) {
+    return async_fork_customization_new_thread_t<In>{}(out, exec);
+  }
+
   struct async_fork_fn {
   private:
     template <class ExecutorFactory, class In>
@@ -239,8 +252,7 @@ namespace detail {
         // Call customization point for fork
         // TODO: how should this actually customise.
         // do we need the In parameter?
-        return async_fork_customization<std::decay_t<decltype(exec)>, In>{}(
-          out, exec);
+        return async_fork_customization<In>(exec, out);
       }
     };
     template <class ExecutorFactory>
