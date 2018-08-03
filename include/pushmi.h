@@ -6777,10 +6777,10 @@ namespace detail {
       PUSHMI_TEMPLATE(class In)
         (requires Sender<In>)
       auto operator()(In in) const {
-        return ::pushmi::detail::sender_from<In, single<>>(
+        return ::pushmi::detail::sender_from(
           std::move(in),
           ::pushmi::detail::submit_transform_out<In>(
-            out_impl<ExecutorFactory, out_from_fn<In>>{ef_}
+            out_impl<ExecutorFactory, receiver_from_fn<In>>{ef_}
           )
         );
       }
@@ -6921,10 +6921,10 @@ namespace detail {
       PUSHMI_TEMPLATE(class In)
         (requires Sender<In>)
       auto operator()(In in) const {
-        return ::pushmi::detail::sender_from<In, single<>>(
+        return ::pushmi::detail::sender_from(
           std::move(in),
           ::pushmi::detail::submit_transform_out<In>(
-              out_impl<out_from_fn<In>>{}
+              out_impl<receiver_from_fn<In>>{}
           )
         );
       }
@@ -7038,10 +7038,10 @@ namespace detail {
       PUSHMI_TEMPLATE(class In)
         (requires Sender<In>)
       auto operator()(In in) {
-        return ::pushmi::detail::sender_from<In, ::pushmi::single<>>(
+        return ::pushmi::detail::sender_from(
           std::move(in),
           ::pushmi::detail::submit_transform_out<In>(
-              out_impl<F, out_from_fn<In>>{f_}
+              out_impl<F, receiver_from_fn<In>>{f_}
           )
         );
       }
@@ -7151,10 +7151,10 @@ namespace detail {
       PUSHMI_TEMPLATE (class In)
         (requires Sender<In>)
       auto operator()(In in) const {
-        return ::pushmi::detail::sender_from<In, ::pushmi::single<>>(
+        return ::pushmi::detail::sender_from(
           std::move(in),
           ::pushmi::detail::submit_transform_out<In>(
-            out_impl<ValueFunction, ShapeF, SharedF, ResultS, out_from_fn<In>>{
+            out_impl<ValueFunction, ShapeF, SharedF, ResultS, receiver_from_fn<In>>{
               vfn_, shapeF_, sharedF_, resultS_}
           )
         );
