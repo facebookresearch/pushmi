@@ -24,7 +24,6 @@ namespace detail {
       std::mutex cvm_;
       bool flag_ = false;
     };
-
     NewThreadAsyncToken(ExecutorType e) :
       e_{std::move(e)}, dataPtr_{std::make_shared<Data>()} {}
 
@@ -61,20 +60,19 @@ namespace detail {
 
 
   // Generic version
-  template<class Executor, class In>
+  template<class Executor, class MakeReceiver>
   struct async_fork_customization_generic {
   private:
     struct value_fn {
       template <class Data, class Value>
       void operator()(Data& data, Value&& value) const {
-        auto exec = data.exec;
         ::pushmi::submit(
-          exec,
-          ::pushmi::now(exec),
+          data.exec,
+          ::pushmi::now(data.exec),
           ::pushmi::make_single(
             [value = (Value&&) value,
-             out = std::move(static_cast<typename std::decay_t<Data>::out_t&>(data)),
-             exec](auto) mutable {
+             out = std::move(static_cast<typename Data::out_t&>(data)),
+             exec = data.exec](auto) mutable {
               // Token hard coded for this executor type at the moment
               auto token = InlineAsyncToken<
                   std::decay_t<decltype(value)>, std::decay_t<Executor>>{exec};
@@ -131,7 +129,7 @@ namespace detail {
   public:
     template<class Out>
     auto operator()(Out out, Executor exec) {
-      return ::pushmi::detail::out_from_fn<In>()(
+      return MakeReceiver{}(
         make_async_fork_fn_data(std::move(out), std::move(exec)),
         // copy 'f' to allow multiple calls to submit
         value_fn{},
@@ -141,28 +139,26 @@ namespace detail {
     }
   };
 
-
   // Customisation for NewThreadAsyncToken
-  template<class In>
+  template<class MakeReceiver>
   struct async_fork_customization_new_thread_t {
   private:
     using Executor = new_thread_t;
     struct value_fn {
       template <class Data, class Value>
       void operator()(Data& data, Value&& value) const {
-        auto exec = data.exec;
         ::pushmi::submit(
-          exec,
-          ::pushmi::now(exec),
+          data.exec,
+          ::pushmi::now(data.exec),
           ::pushmi::make_single(
-            [value = (Value&&)value,
-             out = std::move(static_cast<typename std::decay_t<Data>::out_t&>(data)),
-             exec](auto) mutable {
+            [value = (Value&&) value,
+             out = std::move(static_cast<typename Data::out_t&>(data)),
+             exec = data.exec](auto) mutable {
               // Token hard coded for this executor type at the moment
               auto token = NewThreadAsyncToken<
                   std::decay_t<decltype(value)>, std::decay_t<decltype(exec)>>{
-                exec};
-              token.dataPtr_->v_ = std::forward<Value>(value);
+                std::move(exec)};
+              token.dataPtr_->v_ = std::move(value);
               token.dataPtr_->flag_ = true;
               ::pushmi::set_value(out, std::move(token));
             }
@@ -216,7 +212,7 @@ namespace detail {
   public:
     template<class Out>
     auto operator()(Out out, Executor exec) {
-      return ::pushmi::detail::out_from_fn<In>()(
+      return MakeReceiver{}(
         make_async_fork_fn_data(std::move(out), std::move(exec)),
         // copy 'f' to allow multiple calls to submit
         value_fn{},
@@ -227,45 +223,40 @@ namespace detail {
   };
 
   // Generalisation to customise the entire protocol
-  // TODO: The In template parameter here makes this customisation point
-  // seem strange
-  template<class In, class Executor, class Out>
+  template<class MakeReceiver, class Executor, class Out>
   auto async_fork_customization(Executor exec, Out out) {
-    return async_fork_customization_generic<Executor, In>{}(out, exec);
+    return async_fork_customization_generic<Executor, MakeReceiver>{}(out, exec);
   }
 
-  template<class In, class Out>
-  auto async_fork_customization(new_thread_t exec,  Out out) {
-    return async_fork_customization_new_thread_t<In>{}(out, exec);
+  template<class MakeReceiver, class Out>
+  auto async_fork_customization(new_thread_t exec, Out out) {
+    return async_fork_customization_new_thread_t<MakeReceiver>{}(out, exec);
   }
 
   struct async_fork_fn {
   private:
-    template <class ExecutorFactory, class In>
+    template <class ExecutorFactory, class MakeReceiver>
     struct out_impl {
       ExecutorFactory ef_;
-      out_impl(ExecutorFactory ef) : ef_(std::move(ef)) {}
       PUSHMI_TEMPLATE(class Out)
         (requires Receiver<Out>)
       auto operator()(Out out) const {
         auto exec = ef_();
         // Call customization point for fork
         // TODO: how should this actually customise.
-        // do we need the In parameter?
-        return async_fork_customization<In>(exec, out);
+        return async_fork_customization<MakeReceiver>(exec, out);
       }
     };
     template <class ExecutorFactory>
     struct in_impl {
       ExecutorFactory ef_;
-      in_impl(ExecutorFactory ef) : ef_(std::move(ef)) {}
       PUSHMI_TEMPLATE(class In)
         (requires Sender<In>)
       auto operator()(In in) const {
         return ::pushmi::detail::deferred_from<In, single<>>(
           std::move(in),
           ::pushmi::detail::submit_transform_out<In>(
-            out_impl<ExecutorFactory, In>{ef_}
+            out_impl<ExecutorFactory, out_from_fn<In>>{ef_}
           )
         );
       }
@@ -295,7 +286,7 @@ namespace detail {
   struct async_join_on_value_impl {
     void operator()(Data& data, Token&& token) {
       ::pushmi::set_value(
-        std::move(static_cast<typename std::decay_t<Data>::out_t&>(data)),
+        std::move(static_cast<typename Data::out_t&>(data)),
         std::move(token.value_));
     }
   };
@@ -312,7 +303,7 @@ namespace detail {
   struct async_join_on_value_impl<NewThreadAsyncToken<Value, new_thread_t>, Data> {
     using token_t = NewThreadAsyncToken<Value, new_thread_t>;
   private:
-    using out_t = typename std::decay_t<Data>::out_t;
+    using out_t = typename Data::out_t;
     struct thread_fn {
       struct on_value_fn {
         token_t asyncToken_;
@@ -388,12 +379,12 @@ namespace detail {
         ::pushmi::set_done(out);
       }
     };
-    template <class In>
+    template <class MakeReceiver>
     struct out_impl {
       PUSHMI_TEMPLATE (class Out)
         (requires Receiver<Out>)
       auto operator()(Out out) const {
-        return ::pushmi::detail::out_from_fn<In>()(
+        return MakeReceiver{}(
           make_async_join_fn_data(std::move(out)),
           // copy 'f' to allow multiple calls to submit
           ::pushmi::on_value(value_fn{}),
@@ -408,7 +399,9 @@ namespace detail {
       auto operator()(In in) const {
         return ::pushmi::detail::deferred_from<In, single<>>(
           std::move(in),
-          ::pushmi::detail::submit_transform_out<In>(out_impl<In>{})
+          ::pushmi::detail::submit_transform_out<In>(
+              out_impl<out_from_fn<In>>{}
+          )
         );
       }
     };
@@ -497,19 +490,18 @@ namespace detail {
       F f_;
       template <class Data, class Token>
       void operator()(Data& data, Token&& asyncToken) {
-        async_transform_on_value_impl<F, std::decay_t<Token>, std::decay_t<Data>>(
+        async_transform_on_value_impl<F, std::decay_t<Token>, Data>(
             std::move(f_))(data, std::move(asyncToken)
         );
       }
     };
-    template <class F, class In>
+    template <class F, class MakeReceiver>
     struct out_impl {
       F f_;
-      out_impl(F f) : f_(f) {}
       PUSHMI_TEMPLATE(class Out)
         (requires Receiver<Out>)
       auto operator()(Out out) const {
-        return ::pushmi::detail::out_from_fn<In>()(
+        return MakeReceiver{}(
           std::move(out),
           // copy 'f' to allow multiple calls to submit
           ::pushmi::on_value(on_value_fn<F>{f_})
@@ -519,13 +511,14 @@ namespace detail {
     template <class F>
     struct in_impl {
       F f_;
-      in_impl(F f) : f_(std::move(f)) {}
       PUSHMI_TEMPLATE(class In)
         (requires Sender<In>)
       auto operator()(In in) {
         return ::pushmi::detail::deferred_from<In, ::pushmi::single<>>(
           std::move(in),
-          ::pushmi::detail::submit_transform_out<In>(out_impl<F, In>{f_})
+          ::pushmi::detail::submit_transform_out<In>(
+              out_impl<F, out_from_fn<In>>{f_}
+          )
         );
       }
     };
@@ -599,14 +592,14 @@ namespace detail {
           SharedF,
           ResultS,
           std::decay_t<Token>,
-          std::decay_t<Data>>(
+          Data>(
             std::move(vfn_),
             std::move(shapeF_),
             std::move(sharedF_),
             std::move(resultS_))(data, std::move(asyncToken));
       }
     };
-    template <class ValueFunction, class ShapeF, class SharedF, class ResultS, class In>
+    template <class ValueFunction, class ShapeF, class SharedF, class ResultS, class MakeReceiver>
     struct out_impl {
       ValueFunction vfn_;
       ShapeF shapeF_;
@@ -615,7 +608,7 @@ namespace detail {
       PUSHMI_TEMPLATE (class Out)
         (requires Receiver<Out>)
       auto operator()(Out out) const {
-        return ::pushmi::detail::out_from_fn<In>()(
+        return MakeReceiver{}(
           std::move(out),
           // copy 'f' to allow multiple calls to submit
           ::pushmi::on_value(
@@ -637,7 +630,7 @@ namespace detail {
         return ::pushmi::detail::deferred_from<In, ::pushmi::single<>>(
           std::move(in),
           ::pushmi::detail::submit_transform_out<In>(
-            out_impl<ValueFunction, ShapeF, SharedF, ResultS, In>{
+            out_impl<ValueFunction, ShapeF, SharedF, ResultS, out_from_fn<In>>{
               vfn_, shapeF_, sharedF_, resultS_}
           )
         );
