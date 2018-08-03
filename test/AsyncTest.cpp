@@ -8,7 +8,7 @@
 
 using namespace std::literals;
 
-#include "pushmi/flow_single_deferred.h"
+#include "pushmi/flow_single_sender.h"
 #include "pushmi/o/async.h"
 #include "pushmi/o/empty.h"
 #include "pushmi/o/just.h"
@@ -40,11 +40,11 @@ struct __inline_submit {
 };
 
 inline auto inline_executor() {
-  return ::pushmi::make_time_single_deferred(__inline_submit{});
+  return ::pushmi::make_time_single_sender(__inline_submit{});
 }
 
 SCENARIO( "async", "[async]" ) {
-  GIVEN( "A new_thread time_single_deferred" ) {
+  GIVEN( "A new_thread time_single_sender" ) {
     auto nt = v::new_thread();
     using NT = decltype(nt);
 
@@ -135,7 +135,7 @@ SCENARIO( "async", "[async]" ) {
     }
   }
 
-  GIVEN( "An inline time_single_deferred" ) {
+  GIVEN( "An inline time_single_sender" ) {
     auto inline_exec = inline_executor();
     std::mutex threads_mutex;
 
