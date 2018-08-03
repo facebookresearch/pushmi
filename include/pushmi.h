@@ -1432,9 +1432,11 @@ locked_entangled_pair<T, Dual> lock_both(entangled<T, Dual>& e){
 template <class T, class Dual>
 struct shared_entangled : std::shared_ptr<T> {
   Dual* dual;
+  std::mutex* lock;
 
   template<class P>
-  explicit shared_entangled(std::shared_ptr<P>& p, T& t, Dual& d) : std::shared_ptr<T>(p, std::addressof(t)), dual(std::addressof(d)){
+  explicit shared_entangled(std::shared_ptr<P>& p, T& t, Dual& d, std::mutex& l) :
+    std::shared_ptr<T>(p, std::addressof(t)), dual(std::addressof(d)), lock(std::addressof(l)){
   }
   shared_entangled() = delete;
   shared_entangled(const shared_entangled&) = delete;
@@ -1449,16 +1451,27 @@ using shared_entangled_pair = std::pair<shared_entangled<First, Second>, shared_
 template <class First, class Second>
 auto shared_entangle(First f, Second s)
     -> shared_entangled_pair<First, Second> {
-  auto p = std::make_shared<std::pair<First, Second>>(std::move(f), std::move(s));
-  shared_entangled<First, Second> ef(p, p->first, p->second);
-  shared_entangled<Second, First> es(p, p->second, p->first);
+  struct storage {
+    storage(First&& f, Second&& s) : p((First&&) f, (Second&&) s) {}
+    std::tuple<First, Second> p;
+    std::mutex lock;
+  };
+  auto p = std::make_shared<storage>(std::move(f), std::move(s));
+  shared_entangled<First, Second> ef(p, std::get<0>(p->p), std::get<1>(p->p), p->lock);
+  shared_entangled<Second, First> es(p, std::get<1>(p->p), std::get<0>(p->p), p->lock);
   return {std::move(ef), std::move(es)};
 }
 
 template <class T, class Dual>
 struct locked_shared_entangled_pair : std::pair<T*, Dual*> {
   shared_entangled<T, Dual> e;
+  ~locked_shared_entangled_pair() {
+    if (!!e && !!e.lock) {
+      e.lock->unlock();
+    }
+  }
   explicit locked_shared_entangled_pair(shared_entangled<T, Dual>& e) : e(std::move(e)){
+    this->e.lock->lock();
     this->first = this->e.get();
     this->second = this->e.dual;
   }
@@ -1474,13 +1487,6 @@ template <class T, class Dual>
 locked_shared_entangled_pair<T, Dual> lock_both(shared_entangled<T, Dual>& e){
   return locked_shared_entangled_pair<T, Dual>{e};
 }
-
-// external synchronization required for move and delete
-template<class T>
-struct moving_atomic : std::atomic<T> {
-  using std::atomic<T>::atomic;
-  moving_atomic(moving_atomic&& o) : std::atomic<T>(o.load()) {}
-};
 
 } // namespace pushmi
 //#pragma once
@@ -5845,29 +5851,27 @@ constexpr decltype(auto) apply(F&& f, Tuple&& t) {
 
 namespace detail {
 
-template <class... TagN>
+template <class Cardinality, bool IsFlow = false>
 struct make_receiver;
 template <>
-struct make_receiver<is_none<>, void> : construct_deduced<none> {};
+struct make_receiver<is_none<>> : construct_deduced<none> {};
 template <>
-struct make_receiver<is_single<>, void> : construct_deduced<single> {};
+struct make_receiver<is_single<>> : construct_deduced<single> {};
 template <>
-struct make_receiver<is_many<>, void> : construct_deduced<many> {};
+struct make_receiver<is_many<>> : construct_deduced<many> {};
 template <>
-struct make_receiver<is_single<>, is_flow<>> : construct_deduced<flow_single> {};
+struct make_receiver<is_single<>, true> : construct_deduced<flow_single> {};
 
-template <PUSHMI_TYPE_CONSTRAINT(Sender) In>
-struct out_from_fn {
-  using Cardinality = property_set_index_t<properties_t<In>, is_silent<>>;
-  using Flow = std::conditional_t<property_query_v<properties_t<In>, is_flow<>>, is_flow<>, void>;
-  using Make = make_receiver<Cardinality, Flow>;
+template <class Cardinality, bool IsFlow>
+struct out_from_impl {
+  using Make = make_receiver<Cardinality, IsFlow>;
   PUSHMI_TEMPLATE (class... Ts)
    (requires Invocable<Make, Ts...>)
   auto operator()(std::tuple<Ts...> args) const {
     return pushmi::apply(Make(), std::move(args));
   }
   PUSHMI_TEMPLATE (class... Ts, class... Fns,
-    class This = std::enable_if_t<sizeof...(Fns) != 0, out_from_fn>)
+    class This = std::enable_if_t<sizeof...(Fns) != 0, out_from_impl>)
     (requires And<SemiMovable<Fns>...> &&
       Invocable<Make, std::tuple<Ts...>> &&
       Invocable<This, pushmi::invoke_result_t<Make, std::tuple<Ts...>>, Fns...>)
@@ -5880,6 +5884,12 @@ struct out_from_fn {
     return Make()(std::move(out), std::move(fns)...);
   }
 };
+
+template <PUSHMI_TYPE_CONSTRAINT(Sender) In>
+using out_from_fn =
+    out_from_impl<
+        property_set_index_t<properties_t<In>, is_silent<>>,
+        property_query_v<properties_t<In>, is_flow<>>>;
 
 template <class In, class FN>
 struct submit_transform_out_1 {
@@ -6190,10 +6200,7 @@ using receiver_type_t =
     pushmi::invoke_result_t<
         pushmi::detail::make_receiver<
           property_set_index_t<properties_t<In>, is_silent<>>,
-          std::conditional_t<
-            property_query_v<properties_t<In>, is_flow<>>,
-            is_flow<>,
-            void>>,
+          property_query_v<properties_t<In>, is_flow<>>>,
         AN...>;
 
 PUSHMI_CONCEPT_DEF(
