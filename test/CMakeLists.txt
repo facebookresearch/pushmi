@@ -5,7 +5,7 @@ target_include_directories(catch PUBLIC
 
 include(../external/Catch2/contrib/Catch.cmake)
 
-if(NOT ${CMAKE_VERSION} VERSION_LESS "3.10.0")
+if(NOT ${CMAKE_VERSION} VERSION_LESS "3.10.0" AND NOT PUSHMI_ONE_TEST_BINARY)
 
 add_executable(AsyncTest AsyncTest.cpp)
 target_link_libraries(AsyncTest pushmi catch Threads::Threads)
@@ -14,6 +14,10 @@ catch_discover_tests(AsyncTest)
 add_executable(FlowTest FlowTest.cpp)
 target_link_libraries(FlowTest pushmi catch Threads::Threads)
 catch_discover_tests(FlowTest)
+
+add_executable(FlowManyTest FlowManyTest.cpp)
+target_link_libraries(FlowManyTest pushmi catch Threads::Threads)
+catch_discover_tests(FlowManyTest)
 
 add_executable(CompileTest CompileTest.cpp)
 target_link_libraries(CompileTest pushmi catch Threads::Threads)
@@ -39,7 +43,8 @@ add_executable(PushmiTest PushmiTest.cpp
   CompileTest.cpp
   TrampolineTest.cpp
   NewThreadTest.cpp
-  FlowTest.cpp)
+  FlowTest.cpp
+  FlowManyTest.cpp)
 
 target_link_libraries(PushmiTest pushmi catch Threads::Threads)
 catch_discover_tests(PushmiTest)

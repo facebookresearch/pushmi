@@ -4,14 +4,14 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include "flow_single.h"
+#include "flow_many.h"
 #include "executor.h"
 #include "trampoline.h"
 
 namespace pushmi {
 
-template <class V, class PE = std::exception_ptr, class E = PE>
-class any_flow_single_sender {
+template <class V, class PV, class PE, class E>
+class flow_many_sender<V, PV, PE, E> {
   union data {
     void* pobj_ = nullptr;
     char buffer_[sizeof(V)]; // can hold a V in-situ
@@ -24,15 +24,15 @@ class any_flow_single_sender {
   struct vtable {
     static void s_op(data&, data*) {}
     static any_time_executor<E /* hmm, TP will be invasive */> s_executor(data&) { return {}; }
-    static void s_submit(data&, flow_single<V, PE, E>) {}
+    static void s_submit(data&, any_flow_many<V, PV, PE, E>) {}
     void (*op_)(data&, data*) = vtable::s_op;
     any_time_executor<E> (*executor_)(data&) = vtable::s_executor;
-    void (*submit_)(data&, flow_single<V, PE, E>) = vtable::s_submit;
+    void (*submit_)(data&, any_flow_many<V, PV, PE, E>) = vtable::s_submit;
   };
   static constexpr vtable const noop_ {};
   vtable const* vptr_ = &noop_;
   template <class Wrapped>
-  any_flow_single_sender(Wrapped obj, std::false_type) : any_flow_single_sender() {
+  flow_many_sender(Wrapped obj, std::false_type) : flow_many_sender() {
     struct s {
       static void op(data& src, data* dst) {
         if (dst)
@@ -42,7 +42,7 @@ class any_flow_single_sender {
       static any_time_executor<E> executor(data& src) {
         return any_time_executor<E>{::pushmi::executor(*static_cast<Wrapped*>(src.pobj_))};
       }
-      static void submit(data& src, flow_single<V, PE, E> out) {
+      static void submit(data& src, any_flow_many<V, PV, PE, E> out) {
         ::pushmi::submit(*static_cast<Wrapped*>(src.pobj_), std::move(out));
       }
     };
@@ -51,8 +51,8 @@ class any_flow_single_sender {
     vptr_ = &vtbl;
   }
   template <class Wrapped>
-  any_flow_single_sender(Wrapped obj, std::true_type) noexcept
-    : any_flow_single_sender() {
+  flow_many_sender(Wrapped obj, std::true_type) noexcept
+    : flow_many_sender() {
     struct s {
       static void op(data& src, data* dst) {
         if (dst)
@@ -63,7 +63,7 @@ class any_flow_single_sender {
       static any_time_executor<E> executor(data& src) {
         return any_time_executor<E>{::pushmi::executor(*static_cast<Wrapped*>((void*)src.buffer_))};
       }
-      static void submit(data& src, flow_single<V, PE, E> out) {
+      static void submit(data& src, any_flow_many<V, PV, PE, E> out) {
         ::pushmi::submit(
             *static_cast<Wrapped*>((void*)src.buffer_),
             std::move(out));
@@ -75,83 +75,83 @@ class any_flow_single_sender {
   }
   template <class T, class U = std::decay_t<T>>
   using wrapped_t =
-    std::enable_if_t<!std::is_same<U, any_flow_single_sender>::value, U>;
+    std::enable_if_t<!std::is_same<U, flow_many_sender>::value, U>;
  public:
-  using properties = property_set<is_sender<>, is_flow<>, is_single<>>;
+  using properties = property_set<is_sender<>, is_flow<>, is_many<>>;
 
-  any_flow_single_sender() = default;
-  any_flow_single_sender(any_flow_single_sender&& that) noexcept
-      : any_flow_single_sender() {
+  flow_many_sender() = default;
+  flow_many_sender(flow_many_sender&& that) noexcept
+      : flow_many_sender() {
     that.vptr_->op_(that.data_, &data_);
     std::swap(that.vptr_, vptr_);
   }
   PUSHMI_TEMPLATE (class Wrapped)
-    (requires FlowSender<wrapped_t<Wrapped>, is_single<>>)
-  explicit any_flow_single_sender(Wrapped obj) noexcept(insitu<Wrapped>())
-    : any_flow_single_sender{std::move(obj), bool_<insitu<Wrapped>()>{}} {}
-  ~any_flow_single_sender() {
+    (requires FlowSender<wrapped_t<Wrapped>, is_many<>>)
+  explicit flow_many_sender(Wrapped obj) noexcept(insitu<Wrapped>())
+    : flow_many_sender{std::move(obj), bool_<insitu<Wrapped>()>{}} {}
+  ~flow_many_sender() {
     vptr_->op_(data_, nullptr);
   }
-  any_flow_single_sender& operator=(any_flow_single_sender&& that) noexcept {
-    this->~any_flow_single_sender();
-    new ((void*)this) any_flow_single_sender(std::move(that));
+  flow_many_sender& operator=(flow_many_sender&& that) noexcept {
+    this->~flow_many_sender();
+    new ((void*)this) flow_many_sender(std::move(that));
     return *this;
   }
   any_time_executor<E> executor() {
     return vptr_->executor_(data_);
   }
-  void submit(flow_single<V, PE, E> out) {
+  void submit(any_flow_many<V, PV, PE, E> out) {
     vptr_->submit_(data_, std::move(out));
   }
 };
 
 // Class static definitions:
-template <class V, class PE, class E>
-constexpr typename any_flow_single_sender<V, PE, E>::vtable const
-    any_flow_single_sender<V, PE, E>::noop_;
+template <class V, class PV, class PE, class E>
+constexpr typename flow_many_sender<V, PV, PE, E>::vtable const
+    flow_many_sender<V, PV, PE, E>::noop_;
 
 template <class SF, class EXF>
-class flow_single_sender<SF, EXF> {
+class flow_many_sender<SF, EXF> {
   SF sf_;
   EXF exf_;
 
  public:
-  using properties = property_set<is_sender<>, is_flow<>, is_single<>>;
+  using properties = property_set<is_sender<>, is_flow<>, is_many<>>;
 
-  constexpr flow_single_sender() = default;
-  constexpr explicit flow_single_sender(SF sf)
+  constexpr flow_many_sender() = default;
+  constexpr explicit flow_many_sender(SF sf)
       : sf_(std::move(sf)) {}
-  constexpr flow_single_sender(SF sf, EXF exf)
+  constexpr flow_many_sender(SF sf, EXF exf)
       : sf_(std::move(sf)), exf_(std::move(exf)) {}
 
   auto executor() { return exf_(); }
   PUSHMI_TEMPLATE(class Out)
-    (requires Receiver<Out, is_single<>, is_flow<>> && Invocable<SF&, Out>)
+    (requires Receiver<Out, is_many<>, is_flow<>> && Invocable<SF&, Out>)
   void submit(Out out) {
     sf_(std::move(out));
   }
 };
 
-template <PUSHMI_TYPE_CONSTRAINT(Sender<is_single<>, is_flow<>>) Data, class DSF, class DEXF>
-class flow_single_sender<Data, DSF, DEXF> {
+template <PUSHMI_TYPE_CONSTRAINT(Sender<is_many<>, is_flow<>>) Data, class DSF, class DEXF>
+class flow_many_sender<Data, DSF, DEXF> {
   Data data_;
   DSF sf_;
   DEXF exf_;
 
  public:
-  using properties = property_set_insert_t<properties_t<Data>, property_set<is_sender<>, is_flow<>, is_single<>>>;
+  using properties = property_set_insert_t<properties_t<Data>, property_set<is_sender<>, is_flow<>, is_many<>>>;
 
-  constexpr flow_single_sender() = default;
-  constexpr explicit flow_single_sender(Data data)
+  constexpr flow_many_sender() = default;
+  constexpr explicit flow_many_sender(Data data)
       : data_(std::move(data)) {}
-  constexpr flow_single_sender(Data data, DSF sf)
+  constexpr flow_many_sender(Data data, DSF sf)
       : data_(std::move(data)), sf_(std::move(sf)) {}
-  constexpr flow_single_sender(Data data, DSF sf, DEXF exf)
+  constexpr flow_many_sender(Data data, DSF sf, DEXF exf)
       : data_(std::move(data)), sf_(std::move(sf)), exf_(std::move(exf)) {}
 
   auto executor() { return exf_(data_); }
   PUSHMI_TEMPLATE(class Out)
-    (requires PUSHMI_EXP(lazy::Receiver<Out, is_single<>, is_flow<>> PUSHMI_AND
+    (requires PUSHMI_EXP(lazy::Receiver<Out, is_many<>, is_flow<>> PUSHMI_AND
         lazy::Invocable<DSF&, Data&, Out>))
   void submit(Out out) {
     sf_(data_, std::move(out));
@@ -159,72 +159,75 @@ class flow_single_sender<Data, DSF, DEXF> {
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-// make_flow_single_sender
-PUSHMI_INLINE_VAR constexpr struct make_flow_single_sender_fn {
+// make_flow_many_sender
+PUSHMI_INLINE_VAR constexpr struct make_flow_many_sender_fn {
   inline auto operator()() const {
-    return flow_single_sender<ignoreSF, trampolineEXF>{};
+    return flow_many_sender<ignoreSF, trampolineEXF>{};
   }
   PUSHMI_TEMPLATE(class SF)
     (requires True<> PUSHMI_BROKEN_SUBSUMPTION(&& not Sender<SF>))
   auto operator()(SF sf) const {
-    return flow_single_sender<SF, trampolineEXF>{std::move(sf)};
+    return flow_many_sender<SF, trampolineEXF>{std::move(sf)};
   }
   PUSHMI_TEMPLATE(class SF, class EXF)
     (requires True<> && Invocable<EXF&> PUSHMI_BROKEN_SUBSUMPTION(&& not Sender<SF>))
   auto operator()(SF sf, EXF exf) const {
-    return flow_single_sender<SF, EXF>{std::move(sf), std::move(exf)};
+    return flow_many_sender<SF, EXF>{std::move(sf), std::move(exf)};
   }
   PUSHMI_TEMPLATE(class Data)
-    (requires True<> && Sender<Data, is_single<>, is_flow<>>)
+    (requires True<> && Sender<Data, is_many<>, is_flow<>>)
   auto operator()(Data d) const {
-    return flow_single_sender<Data, passDSF, passDEXF>{std::move(d)};
+    return flow_many_sender<Data, passDSF, passDEXF>{std::move(d)};
   }
   PUSHMI_TEMPLATE(class Data, class DSF)
-    (requires Sender<Data, is_single<>, is_flow<>>)
+    (requires Sender<Data, is_many<>, is_flow<>>)
   auto operator()(Data d, DSF sf) const {
-    return flow_single_sender<Data, DSF, passDEXF>{std::move(d), std::move(sf)};
+    return flow_many_sender<Data, DSF, passDEXF>{std::move(d), std::move(sf)};
   }
   PUSHMI_TEMPLATE(class Data, class DSF, class DEXF)
-    (requires Sender<Data, is_single<>, is_flow<>> && Invocable<DEXF&, Data&>)
+    (requires Sender<Data, is_many<>, is_flow<>> && Invocable<DEXF&, Data&>)
   auto operator()(Data d, DSF sf, DEXF exf) const {
-    return flow_single_sender<Data, DSF, DEXF>{std::move(d), std::move(sf), std::move(exf)};
+    return flow_many_sender<Data, DSF, DEXF>{std::move(d), std::move(sf), std::move(exf)};
   }
-} const make_flow_single_sender {};
+} const make_flow_many_sender {};
 
 ////////////////////////////////////////////////////////////////////////////////
 // deduction guides
 #if __cpp_deduction_guides >= 201703
-flow_single_sender() -> flow_single_sender<ignoreSF, trampolineEXF>;
+flow_many_sender() -> flow_many_sender<ignoreSF, trampolineEXF>;
 
 PUSHMI_TEMPLATE(class SF)
   (requires True<> PUSHMI_BROKEN_SUBSUMPTION(&& not Sender<SF>))
-flow_single_sender(SF) -> flow_single_sender<SF, trampolineEXF>;
+flow_many_sender(SF) -> flow_many_sender<SF, trampolineEXF>;
 
 PUSHMI_TEMPLATE(class SF, class EXF)
   (requires True<> && Invocable<EXF&> PUSHMI_BROKEN_SUBSUMPTION(&& not Sender<SF>))
-flow_single_sender(SF, EXF) -> flow_single_sender<SF, EXF>;
+flow_many_sender(SF, EXF) -> flow_many_sender<SF, EXF>;
 
 PUSHMI_TEMPLATE(class Data)
-  (requires True<> && Sender<Data, is_single<>, is_flow<>>)
-flow_single_sender(Data) -> flow_single_sender<Data, passDSF, passDEXF>;
+  (requires True<> && Sender<Data, is_many<>, is_flow<>>)
+flow_many_sender(Data) -> flow_many_sender<Data, passDSF, passDEXF>;
 
 PUSHMI_TEMPLATE(class Data, class DSF)
-  (requires Sender<Data, is_single<>, is_flow<>>)
-flow_single_sender(Data, DSF) -> flow_single_sender<Data, DSF, passDEXF>;
+  (requires Sender<Data, is_many<>, is_flow<>>)
+flow_many_sender(Data, DSF) -> flow_many_sender<Data, DSF, passDEXF>;
 
 PUSHMI_TEMPLATE(class Data, class DSF, class DEXF)
-  (requires Sender<Data, is_single<>, is_flow<>> && Invocable<DEXF&, Data&>)
-flow_single_sender(Data, DSF, DEXF) -> flow_single_sender<Data, DSF, DEXF>;
+  (requires Sender<Data, is_many<>, is_flow<>> && Invocable<DEXF&, Data&>)
+flow_many_sender(Data, DSF, DEXF) -> flow_many_sender<Data, DSF, DEXF>;
 #endif
 
+template <class V, class PV = std::ptrdiff_t, class PE = std::exception_ptr, class E = PE>
+using any_flow_many_sender = flow_many_sender<V, PV, PE, E>;
+
 template<>
-struct construct_deduced<flow_single_sender>
-  : make_flow_single_sender_fn {};
+struct construct_deduced<flow_many_sender>
+  : make_flow_many_sender_fn {};
 
 // // TODO constrain me
 // template <class V, class E = std::exception_ptr, Sender Wrapped>
 // auto erase_cast(Wrapped w) {
-//   return flow_single_sender<V, E>{std::move(w)};
+//   return flow_many_sender<V, E>{std::move(w)};
 // }
 
 } // namespace pushmi

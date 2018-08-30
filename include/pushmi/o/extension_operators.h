@@ -17,6 +17,8 @@
 #include "../time_single_sender.h"
 #include "../flow_single.h"
 #include "../flow_single_sender.h"
+#include "../flow_many.h"
+#include "../flow_many_sender.h"
 #include "../detail/if_constexpr.h"
 #include "../detail/functional.h"
 
@@ -58,6 +60,8 @@ template <>
 struct make_receiver<is_many<>> : construct_deduced<many> {};
 template <>
 struct make_receiver<is_single<>, true> : construct_deduced<flow_single> {};
+template <>
+struct make_receiver<is_many<>, true> : construct_deduced<flow_many> {};
 
 template <class Cardinality, bool IsFlow>
 struct receiver_from_impl {
@@ -161,6 +165,8 @@ template <>
 struct make_sender<is_many<>> : construct_deduced<many_sender> {};
 template <>
 struct make_sender<is_single<>, false, true> : construct_deduced<flow_single_sender> {};
+template <>
+struct make_sender<is_many<>, false, true> : construct_deduced<flow_many_sender> {};
 template <>
 struct make_sender<is_single<>, true, false> : construct_deduced<time_single_sender> {};
 
@@ -288,6 +294,21 @@ public:
   }
 };
 
+struct executor_fn {
+private:
+  struct impl {
+    PUSHMI_TEMPLATE (class In)
+      (requires Sender<In>)
+    auto operator()(In in) const {
+      return ::pushmi::executor(in);
+    }
+  };
+public:
+  auto operator()() const {
+    return impl{};
+  }
+};
+
 struct do_submit_fn {
 private:
   template <class Out>
@@ -346,6 +367,7 @@ PUSHMI_INLINE_VAR constexpr detail::set_error_fn set_error{};
 PUSHMI_INLINE_VAR constexpr detail::set_value_fn set_value{};
 PUSHMI_INLINE_VAR constexpr detail::set_next_fn set_next{};
 PUSHMI_INLINE_VAR constexpr detail::set_starting_fn set_starting{};
+PUSHMI_INLINE_VAR constexpr detail::executor_fn executor{};
 PUSHMI_INLINE_VAR constexpr detail::do_submit_fn submit{};
 PUSHMI_INLINE_VAR constexpr detail::now_fn now{};
 PUSHMI_INLINE_VAR constexpr detail::now_fn top{};

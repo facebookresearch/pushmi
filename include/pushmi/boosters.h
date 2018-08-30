@@ -42,6 +42,9 @@ template<>
 struct construct_deduced<flow_single>;
 
 template<>
+struct construct_deduced<flow_many>;
+
+template<>
 struct construct_deduced<sender>;
 
 template<>
@@ -55,6 +58,9 @@ struct construct_deduced<flow_single_sender>;
 
 template<>
 struct construct_deduced<time_single_sender>;
+
+template<>
+struct construct_deduced<flow_many_sender>;
 
 template <template <class...> class T, class... AN>
 using deduced_type_t = pushmi::invoke_result_t<construct_deduced<T>, AN...>;
@@ -80,6 +86,12 @@ struct ignoreNF {
 struct ignoreStrtF {
   void operator()(detail::any) {}
 };
+
+struct trampolineEXF;
+// see trampoline.h
+// struct trampolineEXF {
+//   auto operator()() { return trampoline(); }
+// };
 
 
 struct ignoreSF {
@@ -137,6 +149,13 @@ struct passDStrtF {
   }
 };
 
+struct passDEXF {
+  PUSHMI_TEMPLATE(class Data)
+    (requires Sender<Data>)
+  auto operator()(Data& in) const noexcept {
+    return ::pushmi::executor(in);
+  }
+};
 
 struct passDSF {
   template <class Data, class Out>
@@ -281,6 +300,17 @@ auto on_starting(Fns... fns) -> on_starting_fn<Fns...> {
   return on_starting_fn<Fns...>{std::move(fns)...};
 }
 
+template <class Fn>
+struct on_executor_fn : overload_fn<Fn> {
+  constexpr on_executor_fn() = default;
+  using overload_fn<Fn>::overload_fn;
+};
+
+template <class Fn>
+auto on_executor(Fn fn) -> on_executor_fn<Fn> {
+  return on_executor_fn<Fn>{std::move(fn)};
+}
+
 template <class... Fns>
 struct on_submit_fn : overload_fn<Fns...> {
   constexpr on_submit_fn() = default;
@@ -290,6 +320,17 @@ struct on_submit_fn : overload_fn<Fns...> {
 template <class... Fns>
 auto on_submit(Fns... fns) -> on_submit_fn<Fns...> {
   return on_submit_fn<Fns...>{std::move(fns)...};
+}
+
+template <class Fn>
+struct on_now_fn : overload_fn<Fn> {
+  constexpr on_now_fn() = default;
+  using overload_fn<Fn>::overload_fn;
+};
+
+template <class Fn>
+auto on_now(Fn fn) -> on_now_fn<Fn> {
+  return on_now_fn<Fn>{std::move(fn)};
 }
 
 } // namespace pushmi
