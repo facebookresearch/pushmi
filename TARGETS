@@ -10,7 +10,7 @@ cpp_library(
         "include/flowsinglesender.h",
         "include/none.h",
         "include/piping.h",
-        "include/single.h",
+        "include/receiver.h",
         "include/singlesender.h",
         "include/traits.h",
         "include/trampoline.h",
