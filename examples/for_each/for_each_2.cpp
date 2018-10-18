@@ -100,10 +100,10 @@ int main()
     x = 42;
   });
 
+  p.wait();
+  p.stop();
+
   assert(std::count(vec.begin(), vec.end(), 42) == static_cast<int>(vec.size()));
 
   std::cout << "OK" << std::endl;
-
-  p.stop();
-  p.wait();
 }
