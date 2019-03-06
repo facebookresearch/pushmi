@@ -1,26 +1,38 @@
+/*
+ * Copyright 2018-present Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 #pragma once
-// Copyright (c) 2018-present, Facebook, Inc.
-//
-// This source code is licensed under the MIT license found in the
-// LICENSE file in the root directory of this source tree.
 
+#include <pushmi/piping.h>
+#include <pushmi/executor.h>
 #include <algorithm>
 #include <chrono>
 #include <deque>
 #include <thread>
-#include "executor.h"
 
 namespace pushmi {
 
 struct recurse_t {};
 constexpr const recurse_t recurse{};
 
-struct _pipeable_sender_ {};
-
 namespace detail {
 
-PUSHMI_INLINE_VAR constexpr struct ownordelegate_t {} const ownordelegate {};
-PUSHMI_INLINE_VAR constexpr struct ownornest_t {} const ownornest {};
+PUSHMI_INLINE_VAR constexpr struct ownordelegate_t {
+} const ownordelegate{};
+PUSHMI_INLINE_VAR constexpr struct ownornest_t {
+} const ownornest{};
 
 class trampoline_id {
   std::thread::id threadid;
@@ -35,30 +47,39 @@ class trampoline_id {
 template <class E = std::exception_ptr>
 class trampoline;
 
-template <class E = std::exception_ptr>
-class delegator : _pipeable_sender_ {
- public:
-  using properties = property_set<is_sender<>, is_executor<>, is_maybe_blocking<>, is_fifo_sequence<>, is_single<>>;
+template<class E, class Tag>
+struct trampoline_task {
+  using properties = property_set<
+      is_sender<>,
+      is_maybe_blocking<>,
+      is_single<>>;
 
-  delegator executor() { return {}; }
-  PUSHMI_TEMPLATE (class SingleReceiver)
-    (requires ReceiveValue<remove_cvref_t<SingleReceiver>, any_executor_ref<E>>)
-  void submit(SingleReceiver&& what) {
-    trampoline<E>::submit(
-        ownordelegate, std::forward<SingleReceiver>(what));
+  PUSHMI_TEMPLATE(class SingleReceiver)
+  (requires ReceiveValue<
+      SingleReceiver,
+      any_executor_ref<E>>)
+  void submit(SingleReceiver&& what) && {
+    trampoline<E>::submit(Tag{}, std::forward<SingleReceiver>(what));
   }
 };
 
 template <class E = std::exception_ptr>
-class nester : _pipeable_sender_ {
+class delegator : pipeorigin {
  public:
-  using properties = property_set<is_sender<>, is_executor<>, is_maybe_blocking<>, is_fifo_sequence<>, is_single<>>;
+   using properties = property_set<is_executor<>, is_fifo_sequence<>>;
 
-  nester executor() { return {}; }
-  PUSHMI_TEMPLATE (class SingleReceiver)
-    (requires ReceiveValue<remove_cvref_t<SingleReceiver>, any_executor_ref<E>>)
-  void submit(SingleReceiver&& what) {
-    trampoline<E>::submit(ownornest, std::forward<SingleReceiver>(what));
+  trampoline_task<E, ownordelegate_t> schedule() {
+    return {};
+  }
+};
+
+template <class E = std::exception_ptr>
+class nester : pipeorigin {
+ public:
+  using properties = property_set<is_executor<>, is_fifo_sequence<>>;
+
+  trampoline_task<E, ownornest_t> schedule() {
+    return {};
   }
 };
 
@@ -66,8 +87,7 @@ template <class E>
 class trampoline {
  private:
   using error_type = std::decay_t<E>;
-  using work_type =
-     any_receiver<error_type, any_executor_ref<error_type>>;
+  using work_type = any_receiver<error_type>;
   using queue_type = std::deque<work_type>;
   using pending_type = std::tuple<int, queue_type, bool>;
 
@@ -97,17 +117,27 @@ class trampoline {
     return owner() != nullptr;
   }
 
+  struct delegate_impl {
+    template<class Data>
+    void operator()(Data& d){
+      delegator<E> that;
+      set_value(d, that);
+    }
+  };
+
   template <class Selector, class Derived>
   static void submit(Selector, Derived&, recurse_t) {
     if (!is_owned()) {
-      abort();
+      std::terminate();
     }
     repeat(*owner()) = true;
   }
 
-  PUSHMI_TEMPLATE (class SingleReceiver)
-    (requires not Same<SingleReceiver, recurse_t>)
-  static void submit(ownordelegate_t, SingleReceiver awhat) {
+  PUSHMI_TEMPLATE(class SingleReceiver)
+  (requires not Same<SingleReceiver, recurse_t>)
+  static void submit(
+      ownordelegate_t,
+      SingleReceiver awhat) {
     delegator<E> that;
 
     if (is_owned()) {
@@ -117,14 +147,14 @@ class trampoline {
       try {
         if (++depth(*owner()) > 100) {
           // defer work to owner
-          pending(*owner()).push_back(work_type{std::move(awhat)});
+          pending(*owner()).push_back(work_type{make_receiver(std::move(awhat), delegate_impl{})});
         } else {
           // dynamic recursion - optimization to balance queueing and
           // stack usage and value interleaving on the same thread.
-          ::pushmi::set_value(awhat, that);
-          ::pushmi::set_done(awhat);
+          set_value(awhat, that);
+          set_done(awhat);
         }
-      } catch(...) {
+      } catch (...) {
         --depth(*owner());
         throw;
       }
@@ -141,31 +171,40 @@ class trampoline {
     // poor mans scope guard
     try {
       trampoline<E>::submit(ownornest, std::move(awhat));
-    } catch(...) {
-
+    } catch (...) {
       // ignore exceptions while delivering the exception
       try {
-        ::pushmi::set_error(awhat, std::current_exception());
+        set_error(awhat, std::current_exception());
         for (auto& what : pending(pending_store)) {
-          ::pushmi::set_error(what, std::current_exception());
+          set_error(what, std::current_exception());
         }
       } catch (...) {
       }
       pending(pending_store).clear();
 
-      if(!is_owned()) { std::abort(); }
-      if(!pending(pending_store).empty()) { std::abort(); }
+      if (!is_owned()) {
+        std::terminate();
+      }
+      if (!pending(pending_store).empty()) {
+        std::terminate();
+      }
       owner() = nullptr;
       throw;
     }
-    if(!is_owned()) { std::abort(); }
-    if(!pending(pending_store).empty()) { std::abort(); }
+    if (!is_owned()) {
+      std::terminate();
+    }
+    if (!pending(pending_store).empty()) {
+      std::terminate();
+    }
     owner() = nullptr;
   }
 
-  PUSHMI_TEMPLATE (class SingleReceiver)
-    (requires not Same<SingleReceiver, recurse_t>)
-  static void submit(ownornest_t, SingleReceiver awhat) {
+  PUSHMI_TEMPLATE(class SingleReceiver)
+  (requires not Same<SingleReceiver, recurse_t>)
+  static void submit(
+      ownornest_t,
+      SingleReceiver awhat) {
     delegator<E> that;
 
     if (!is_owned()) {
@@ -180,13 +219,12 @@ class trampoline {
       bool go = true;
       while (go) {
         repeat(pending_store) = false;
-        ::pushmi::set_value(awhat, that);
-        ::pushmi::set_done(awhat);
+        set_value(awhat, that);
+        set_done(awhat);
         go = repeat(pending_store);
       }
     } else {
-      pending(pending_store)
-          .push_back(work_type{std::move(awhat)});
+      pending(pending_store).push_back(work_type{make_receiver(std::move(awhat), delegate_impl{})});
     }
 
     if (pending(pending_store).empty()) {
@@ -196,8 +234,8 @@ class trampoline {
     while (!pending(pending_store).empty()) {
       auto what = std::move(pending(pending_store).front());
       pending(pending_store).pop_front();
-      ::pushmi::set_value(what, any_executor_ref<error_type>{that});
-      ::pushmi::set_done(what);
+      set_value(what);
+      set_done(what);
     }
   }
 };
@@ -206,7 +244,9 @@ class trampoline {
 
 template <class E = std::exception_ptr>
 detail::trampoline_id get_trampoline_id() {
-  if(!detail::trampoline<E>::is_owned()) { std::abort(); }
+  if (!detail::trampoline<E>::is_owned()) {
+    std::terminate();
+  }
   return detail::trampoline<E>::get_id();
 }
 
@@ -226,19 +266,21 @@ inline detail::nester<E> nested_trampoline() {
 
 // see boosters.h
 struct trampolineEXF {
-  auto operator()() { return trampoline(); }
+  auto operator()() {
+    return trampoline();
+  }
 };
 
 namespace detail {
 
-PUSHMI_TEMPLATE (class E)
-  (requires SenderTo<delegator<E>, recurse_t>)
+PUSHMI_TEMPLATE(class E)
+(requires SenderTo<delegator<E>, recurse_t>)
 decltype(auto) repeat(delegator<E>& exec) {
-  ::pushmi::submit(exec, recurse);
+  submit(exec, recurse);
 }
 template <class AnyExec>
-void repeat(AnyExec& exec) {
-  std::abort();
+[[noreturn]] void repeat(AnyExec&) {
+  std::terminate();
 }
 
 } // namespace detail

@@ -1,8 +1,19 @@
+/*
+ * Copyright 2018-present Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 #pragma once
-// Copyright (c) 2018-present, Facebook, Inc.
-//
-// This source code is licensed under the MIT license found in the
-// LICENSE file in the root directory of this source tree.
 
 #include <chrono>
 #include <cstdint>
@@ -11,9 +22,9 @@
 #include <functional>
 #include <utility>
 
-#include "concepts.h"
-#include "traits.h"
-#include "detail/functional.h"
+#include <pushmi/concepts.h>
+#include <pushmi/detail/functional.h>
+#include <pushmi/traits.h>
 
 namespace pushmi {
 
@@ -45,16 +56,11 @@ template<>
 struct construct_deduced<flow_single_sender>;
 
 template<>
-struct construct_deduced<constrained_single_sender>;
-
-template<>
-struct construct_deduced<time_single_sender>;
-
-template<>
 struct construct_deduced<flow_many_sender>;
 
 template <template <class...> class T, class... AN>
-using deduced_type_t = pushmi::invoke_result_t<construct_deduced<T>, AN...>;
+using deduced_type_t =
+    ::pushmi::invoke_result_t<construct_deduced<T>, AN...>;
 
 struct ignoreVF {
   PUSHMI_TEMPLATE(class... VN)
@@ -63,8 +69,9 @@ struct ignoreVF {
 };
 
 struct abortEF {
+  [[noreturn]]
   void operator()(detail::any) noexcept {
-    std::abort();
+    std::terminate();
   }
 };
 
@@ -102,18 +109,18 @@ struct priorityZeroF {
 struct passDVF {
   PUSHMI_TEMPLATE(class Data, class... VN)
     (requires requires (
-      ::pushmi::set_value(std::declval<Data&>(), std::declval<VN>()...)
+      set_value(std::declval<Data&>(), std::declval<VN>()...)
     ) && Receiver<Data>)
   void operator()(Data& out, VN&&... vn) const {
-    ::pushmi::set_value(out, (VN&&) vn...);
+    set_value(out, (VN&&) vn...);
   }
 };
 
 struct passDEF {
   PUSHMI_TEMPLATE(class E, class Data)
     (requires ReceiveError<Data, E>)
-  void operator()(Data& out, E e) const noexcept {
-    ::pushmi::set_error(out, e);
+  void operator()(Data& out, E&& e) const noexcept {
+    set_error(out, (E&&)e);
   }
 };
 
@@ -121,17 +128,17 @@ struct passDDF {
   PUSHMI_TEMPLATE(class Data)
     (requires Receiver<Data>)
   void operator()(Data& out) const {
-    ::pushmi::set_done(out);
+    set_done(out);
   }
 };
 
 struct passDStrtF {
   PUSHMI_TEMPLATE(class Up, class Data)
     (requires requires (
-      ::pushmi::set_starting(std::declval<Data&>(), std::declval<Up>())
+      set_starting(std::declval<Data&>(), std::declval<Up>())
     ) && Receiver<Data>)
   void operator()(Data& out, Up&& up) const {
-    ::pushmi::set_starting(out, (Up&&) up);
+    set_starting(out, (Up&&) up);
   }
 };
 
@@ -139,24 +146,24 @@ struct passDEXF {
   PUSHMI_TEMPLATE(class Data)
     (requires Sender<Data>)
   auto operator()(Data& in) const noexcept {
-    return ::pushmi::executor(in);
+    return get_executor(in);
   }
 };
 
 struct passDSF {
   template <class Data, class Out>
   void operator()(Data& in, Out out) {
-    ::pushmi::submit(in, std::move(out));
+    submit(in, std::move(out));
   }
   template <class Data, class TP, class Out>
   void operator()(Data& in, TP at, Out out) {
-    ::pushmi::submit(in, std::move(at), std::move(out));
+    submit(in, std::move(at), std::move(out));
   }
 };
 
 struct passDNF {
   PUSHMI_TEMPLATE(class Data)
-    (requires TimeSender<Data>)
+    (requires TimeExecutor<Data>)
   auto operator()(Data& in) const noexcept {
     return ::pushmi::now(in);
   }
@@ -164,14 +171,14 @@ struct passDNF {
 
 struct passDZF {
   PUSHMI_TEMPLATE(class Data)
-    (requires ConstrainedSender<Data>)
+    (requires ConstrainedExecutor<Data>)
   auto operator()(Data& in) const noexcept {
     return ::pushmi::top(in);
   }
 };
 
 // inspired by Ovrld - shown in a presentation by Nicolai Josuttis
-#if __cpp_variadic_using >= 201611 && __cpp_concepts
+#if 0 //__cpp_variadic_using >= 201611 && __cpp_concepts
 template <PUSHMI_TYPE_CONSTRAINT(SemiMovable)... Fns>
   requires sizeof...(Fns) > 0
 struct overload_fn : Fns... {
@@ -195,7 +202,7 @@ struct overload_fn<Fn> : Fn {
       : Fn(std::move(fn)) {}
   using Fn::operator();
 };
-#if !defined(__GNUC__) || __GNUC__ >= 8
+#if 0 //!defined(__GNUC__) || __GNUC__ >= 8
 template <class Fn, class... Fns>
 struct overload_fn<Fn, Fns...> : Fn, overload_fn<Fns...> {
   constexpr overload_fn() = default;
@@ -294,6 +301,17 @@ auto on_executor(Fn fn) -> on_executor_fn<Fn> {
   return on_executor_fn<Fn>{std::move(fn)};
 }
 
+template <class Fn>
+struct on_make_strand_fn : overload_fn<Fn> {
+  constexpr on_make_strand_fn() = default;
+  using overload_fn<Fn>::overload_fn;
+};
+
+template <class Fn>
+auto on_make_strand(Fn fn) -> on_make_strand_fn<Fn> {
+  return on_make_strand_fn<Fn>{std::move(fn)};
+}
+
 template <class... Fns>
 struct on_submit_fn : overload_fn<Fns...> {
   constexpr on_submit_fn() = default;
@@ -303,6 +321,17 @@ struct on_submit_fn : overload_fn<Fns...> {
 template <class... Fns>
 auto on_submit(Fns... fns) -> on_submit_fn<Fns...> {
   return on_submit_fn<Fns...>{std::move(fns)...};
+}
+
+template <class... Fns>
+struct on_schedule_fn : overload_fn<Fns...> {
+  constexpr on_schedule_fn() = default;
+  using overload_fn<Fns...>::overload_fn;
+};
+
+template <class... Fns>
+auto on_schedule(Fns... fns) -> on_schedule_fn<Fns...> {
+  return on_schedule_fn<Fns...>{std::move(fns)...};
 }
 
 template <class Fn>

@@ -1,61 +1,94 @@
+/*
+ * Copyright 2018-present Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 #pragma once
-// Copyright (c) 2018-present, Facebook, Inc.
-//
-// This source code is licensed under the MIT license found in the
-// LICENSE file in the root directory of this source tree.
 
-#include "../piping.h"
-#include "../executor.h"
-#include "extension_operators.h"
+#include <pushmi/executor.h>
+#include <pushmi/o/extension_operators.h>
+#include <pushmi/piping.h>
 
 namespace pushmi {
 
 namespace detail {
 
-template<class Executor>
+template <class Exec>
 struct via_fn_base {
-  Executor exec;
-  bool done;
-  explicit via_fn_base(Executor ex) : exec(std::move(ex)), done(false) {}
-  via_fn_base& via_fn_base_ref() {return *this;}
+  Exec exec_;
+  bool done_;
+  explicit via_fn_base(Exec exec) : exec_(std::move(exec)), done_(false) {}
+  via_fn_base& via_fn_base_ref() {
+    return *this;
+  }
 };
-template<class Executor, class Out>
-struct via_fn_data : public Out, public via_fn_base<Executor> {
+template <class Exec, class Out>
+struct via_fn_data : flow_receiver<>, via_fn_base<Exec> {
+  via_fn_data(Out out, Exec exec)
+      : via_fn_base<Exec>(std::move(exec)), out_(std::make_shared<Out>(std::move(out))) {}
 
-  via_fn_data(Out out, Executor exec) :
-    Out(std::move(out)), via_fn_base<Executor>(std::move(exec)) {}
+  using properties = properties_t<Out>;
+  using flow_receiver<>::value;
+  using flow_receiver<>::error;
+  using flow_receiver<>::done;
 
-  using typename Out::properties;
-  using Out::error;
-  using Out::done;
+  template <class Up>
+  struct impl {
+    Up up_;
+    std::shared_ptr<Out> out_;
+    void operator()(any) {
+      set_starting(out_, std::move(up_));
+    }
+  };
+  template<class Up>
+  void starting(Up&& up) {
+    if (this->via_fn_base_ref().done_) {
+      return;
+    }
+    submit(
+      ::pushmi::schedule(this->via_fn_base_ref().exec_),
+        ::pushmi::make_receiver(impl<std::decay_t<Up>>{
+            (Up &&) up, out_}));
+  }
+  std::shared_ptr<Out> out_;
 };
 
-template<class Out, class Executor>
-auto make_via_fn_data(Out out, Executor ex) -> via_fn_data<Executor, Out> {
+template <class Out, class Exec>
+auto make_via_fn_data(Out out, Exec ex) -> via_fn_data<Exec, Out> {
   return {std::move(out), std::move(ex)};
 }
 
 struct via_fn {
-private:
+ private:
   template <class Out>
   struct on_value_impl {
     template <class V>
     struct impl {
       V v_;
-      Out out_;
+      std::shared_ptr<Out> out_;
       void operator()(any) {
-        ::pushmi::set_value(out_, std::move(v_));
+        set_value(out_, std::move(v_));
       }
     };
     template <class Data, class V>
     void operator()(Data& data, V&& v) const {
-      if (data.via_fn_base_ref().done) {return;}
-      ::pushmi::submit(
-        data.via_fn_base_ref().exec,
-        ::pushmi::make_receiver(
-          impl<std::decay_t<V>>{(V&&) v, std::move(static_cast<Out&>(data))}
-        )
-      );
+      if (data.via_fn_base_ref().done_) {
+        return;
+      }
+      submit(
+        ::pushmi::schedule(data.via_fn_base_ref().exec_),
+          ::pushmi::make_receiver(impl<std::decay_t<V>>{
+              (V &&) v, data.out_}));
     }
   };
   template <class Out>
@@ -63,88 +96,78 @@ private:
     template <class E>
     struct impl {
       E e_;
-      Out out_;
+      std::shared_ptr<Out> out_;
       void operator()(any) noexcept {
-        ::pushmi::set_error(out_, std::move(e_));
+        set_error(out_, std::move(e_));
       }
     };
     template <class Data, class E>
     void operator()(Data& data, E e) const noexcept {
-      if (data.via_fn_base_ref().done) {return;}
-      data.via_fn_base_ref().done = true;
-      ::pushmi::submit(
-        data.via_fn_base_ref().exec,
-        ::pushmi::make_receiver(
-          impl<E>{std::move(e), std::move(static_cast<Out&>(data))}
-        )
-      );
+      if (data.via_fn_base_ref().done_) {
+        return;
+      }
+      data.via_fn_base_ref().done_ = true;
+      submit(
+        ::pushmi::schedule(data.via_fn_base_ref().exec_),
+          ::pushmi::make_receiver(
+              impl<E>{std::move(e), std::move(data.out_)}));
     }
   };
   template <class Out>
   struct on_done_impl {
     struct impl {
-      Out out_;
+      std::shared_ptr<Out> out_;
       void operator()(any) {
-        ::pushmi::set_done(out_);
+        set_done(out_);
       }
     };
     template <class Data>
     void operator()(Data& data) const {
-      if (data.via_fn_base_ref().done) {return;}
-      data.via_fn_base_ref().done = true;
+      if (data.via_fn_base_ref().done_) {
+        return;
+      }
+      data.via_fn_base_ref().done_ = true;
+      submit(
+          ::pushmi::schedule(data.via_fn_base_ref().exec_),
+          ::pushmi::make_receiver(
+              impl{std::move(data.out_)}));
+    }
+  };
+  template <class In, class Factory>
+  struct submit_impl {
+    Factory ef_;
+    PUSHMI_TEMPLATE(class SIn, class Out)
+    (requires Receiver<Out>) //
+        void
+        operator()(SIn&& in, Out out) const {
+      auto exec = ::pushmi::make_strand(ef_);
       ::pushmi::submit(
-        data.via_fn_base_ref().exec,
-        ::pushmi::make_receiver(
-          impl{std::move(static_cast<Out&>(data))}
-        )
-      );
+          (In &&) in,
+          ::pushmi::detail::receiver_from_fn<std::decay_t<In>>()(
+              make_via_fn_data(std::move(out), std::move(exec)),
+              on_value_impl<Out>{},
+              on_error_impl<Out>{},
+              on_done_impl<Out>{}));
     }
   };
-  template <class In, class ExecutorFactory>
-  struct executor_impl {
-    ExecutorFactory ef_;
-    template <class Data>
-    auto operator()(Data& data) const {
-      return ef_();
-    }
-  };
-  template <class In, class ExecutorFactory>
-  struct out_impl {
-    ExecutorFactory ef_;
-    PUSHMI_TEMPLATE(class Out)
-      (requires Receiver<Out>)
-    auto operator()(Out out) const {
-      auto exec = ef_();
-      return ::pushmi::detail::receiver_from_fn<In>()(
-        make_via_fn_data(std::move(out), std::move(exec)),
-        on_value_impl<Out>{},
-        on_error_impl<Out>{},
-        on_done_impl<Out>{}
-      );
-    }
-  };
-  template <class ExecutorFactory>
-  struct in_impl {
-    ExecutorFactory ef_;
-    PUSHMI_TEMPLATE (class In)
-      (requires Sender<In>)
-    auto operator()(In in) const {
+  template <class Factory>
+  struct adapt_impl {
+    Factory ef_;
+    PUSHMI_TEMPLATE(class In)
+    (requires Sender<In>) //
+        auto
+        operator()(In&& in) const {
       return ::pushmi::detail::sender_from(
-        std::move(in),
-        ::pushmi::detail::submit_transform_out<In>(
-          out_impl<In, ExecutorFactory>{ef_}
-        ),
-        ::pushmi::on_executor(executor_impl<In, ExecutorFactory>{ef_})
-      );
+          (In&&)in,
+          submit_impl<In&&, Factory>{ef_});
     }
   };
-public:
-  PUSHMI_TEMPLATE(class ExecutorFactory)
-    (requires Invocable<ExecutorFactory&> &&
-      Executor<invoke_result_t<ExecutorFactory&>> &&
-      FifoSequence<invoke_result_t<ExecutorFactory&>>)
-  auto operator()(ExecutorFactory ef) const {
-    return in_impl<ExecutorFactory>{std::move(ef)};
+
+ public:
+  PUSHMI_TEMPLATE(class Factory)
+  (requires StrandFactory<Factory>)
+  auto operator()(Factory ef) const {
+    return adapt_impl<Factory>{std::move(ef)};
   }
 };
 

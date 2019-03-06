@@ -1,9 +1,19 @@
-// clang-format off
+/*
+ * Copyright 2018-present Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 #pragma once
-// Copyright (c) 2018-present, Facebook, Inc.
-//
-// This source code is licensed under the MIT license found in the
-// LICENSE file in the root directory of this source tree.
 
 #include <type_traits>
 
@@ -13,7 +23,7 @@
 
 // disable buggy compatibility warning about "requires" and "concept" being
 // C++20 keywords.
-#if defined(__clang__) && not defined(__APPLE__)
+#if defined(__clang__) && !defined(__APPLE__)
 #define PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN \
     _Pragma("GCC diagnostic push") \
     _Pragma("GCC diagnostic ignored \"-Wunknown-pragmas\"") \
@@ -125,7 +135,7 @@ PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN
     PUSHMI_PP_IIF(X)(PUSHMI_PP_EMPTY, PUSHMI_PP_COMMA)()
 
 #define PUSHMI_CONCEPT_ASSERT(...)                                             \
-    static_assert((bool) (__VA_ARGS__),                                        \
+    static_assert(static_cast<bool>(__VA_ARGS__),                              \
         "Concept assertion failed : " #__VA_ARGS__)
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -138,7 +148,8 @@ PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN
 //         concept Assignable,
 //             requires (T t, U &&u) (
 //                 t = (U &&) u,
-//                 ::pushmi::concepts::requires_<Same<decltype(t = (U &&) u), T>>
+//                 ::pushmi::concepts::requires_<Same<decltype(t = (U &&)
+//                 u), T>>
 //             ) &&
 //             std::is_lvalue_reference_v<T>
 //     );
@@ -214,14 +225,14 @@ PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN
 #define PUSHMI_PP_DECL_DEF_IMPL(TPARAM, NAME, ARGS, ...)                       \
     inline namespace _eager_ {                                                 \
         PUSHMI_PP_CAT(PUSHMI_PP_DEF_, TPARAM)                                  \
-        concept bool NAME = PUSHMI_PP_DEF_IMPL(__VA_ARGS__)(__VA_ARGS__);      \
+        concept bool NAME = PUSHMI_PP_DEF_IMPL(__VA_ARGS__,)(__VA_ARGS__);     \
     }                                                                          \
     namespace lazy = _eager_;                                                  \
     /**/
 #else
 // No requires expression:
 #define PUSHMI_PP_DEF_IMPL_0(...)                                              \
-    () -> std::enable_if_t<bool(__VA_ARGS__), int>                             \
+    () -> std::enable_if_t<static_cast<bool>(__VA_ARGS__), int>                \
     /**/
 // Requires expression:
 #define PUSHMI_PP_DEF_IMPL_1(...)                                              \
@@ -232,58 +243,65 @@ PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN
     /**/
 #define PUSHMI_PP_DEF_IMPL_1_REQUIRES(...)                                     \
     (__VA_ARGS__) -> std::enable_if_t<bool(                                    \
-        ::pushmi::concepts::detail::requires_  PUSHMI_PP_DEF_REQUIRES_BODY     \
+        ::pushmi::concepts::detail::requires_                           \
+        PUSHMI_PP_DEF_REQUIRES_BODY                                            \
     /**/
- #define PUSHMI_PP_DEF_REQUIRES_BODY(...)                                      \
+#define PUSHMI_PP_DEF_REQUIRES_BODY(...)                                       \
     <decltype(__VA_ARGS__, void())>()                                          \
     /**/
-#define PUSHMI_PP_DECL_DEF_IMPL(TPARAM, NAME, ARGS, ...)                       \
-    struct PUSHMI_PP_CAT(NAME, Concept) {                                      \
-        using Concept = PUSHMI_PP_CAT(NAME, Concept);                          \
-        PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN                                    \
-        PUSHMI_PP_CAT(PUSHMI_PP_DEF_, TPARAM)                                  \
-        static auto Requires_ PUSHMI_PP_DEF_IMPL(__VA_ARGS__)(__VA_ARGS__) {   \
-            return 0;                                                          \
-        }                                                                      \
-        PUSHMI_PP_IGNORE_CXX2A_COMPAT_END                                      \
-        PUSHMI_PP_CAT(PUSHMI_PP_DEF_, TPARAM)                                  \
-        struct Eval {                                                          \
-            template <class C_ = Concept>                                      \
-            static constexpr decltype(                                         \
-                ::pushmi::concepts::detail::gcc_bugs(                          \
-                    &C_::template Requires_<PUSHMI_PP_EXPAND ARGS>))           \
-            impl(int) noexcept { return true; }                                \
-            static constexpr bool impl(long) noexcept { return false; }        \
-            explicit constexpr operator bool() const noexcept {                \
-                return Eval::impl(0);                                          \
-            }                                                                  \
-            template <class PMThis = Concept, bool PMB,                        \
-              class = std::enable_if_t<PMB == (bool) PMThis{}>>                \
-            constexpr operator std::integral_constant<bool, PMB>() const noexcept {\
-                return {};                                                     \
-            }                                                                  \
-            constexpr auto operator!() const noexcept {                        \
-                return ::pushmi::concepts::detail::Not<Eval>{};                \
-            }                                                                  \
-            template <class That>                                              \
-            constexpr auto operator&&(That) const noexcept {                   \
-                return ::pushmi::concepts::detail::And<Eval, That>{};          \
-            }                                                                  \
-            template <class That>                                              \
-            constexpr auto operator||(That) const noexcept {                   \
-                return ::pushmi::concepts::detail::Or<Eval, That>{};           \
-            }                                                                  \
-        };                                                                     \
-    };                                                                         \
-    PUSHMI_PP_CAT(PUSHMI_PP_DEF_, TPARAM)                                      \
-    PUSHMI_INLINE_VAR constexpr bool NAME =                                    \
-        (bool)PUSHMI_PP_CAT(NAME, Concept)::Eval<PUSHMI_PP_EXPAND ARGS>{};     \
-    namespace lazy {                                                           \
-        PUSHMI_PP_CAT(PUSHMI_PP_DEF_, TPARAM)                                  \
-        PUSHMI_INLINE_VAR constexpr auto NAME =                                \
-            PUSHMI_PP_CAT(NAME, Concept)::Eval<PUSHMI_PP_EXPAND ARGS>{};       \
-    }                                                                          \
-    /**/
+#define PUSHMI_PP_DECL_DEF_IMPL(TPARAM, NAME, ARGS, ...)                      \
+  struct PUSHMI_PP_CAT(NAME, Concept) {                                       \
+    using Concept = PUSHMI_PP_CAT(NAME, Concept);                             \
+    PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN                                       \
+    PUSHMI_PP_CAT(PUSHMI_PP_DEF_, TPARAM)                                     \
+    static auto Requires_ PUSHMI_PP_DEF_IMPL(__VA_ARGS__,)(__VA_ARGS__) {     \
+      return 0;                                                               \
+    }                                                                         \
+    PUSHMI_PP_IGNORE_CXX2A_COMPAT_END                                         \
+    PUSHMI_PP_CAT(PUSHMI_PP_DEF_, TPARAM)                                     \
+    struct Eval {                                                             \
+      template <class C_ = Concept,                                           \
+        decltype(::pushmi::concepts::detail::gcc_bugs(                 \
+            &C_::template Requires_<PUSHMI_PP_EXPAND ARGS>)) = nullptr>       \
+      static constexpr bool impl(int) noexcept {                              \
+        return true;                                                          \
+      }                                                                       \
+      static constexpr bool impl(long) noexcept {                             \
+        return false;                                                         \
+      }                                                                       \
+      explicit constexpr operator bool() const noexcept {                     \
+        return Eval::impl(0);                                                 \
+      }                                                                       \
+      template <                                                              \
+          class PMThis = Concept,                                             \
+          bool PMB,                                                           \
+          class = std::enable_if_t<PMB == static_cast<bool>(PMThis{})>>       \
+      constexpr operator std::integral_constant<bool, PMB>() const noexcept { \
+        return {};                                                            \
+      }                                                                       \
+      constexpr auto operator!() const noexcept {                             \
+        return ::pushmi::concepts::detail::Not<Eval>{};                \
+      }                                                                       \
+      template <class That>                                                   \
+      constexpr auto operator&&(That) const noexcept {                        \
+        return ::pushmi::concepts::detail::And<Eval, That>{};          \
+      }                                                                       \
+      template <class That>                                                   \
+      constexpr auto operator||(That) const noexcept {                        \
+        return ::pushmi::concepts::detail::Or<Eval, That>{};           \
+      }                                                                       \
+    };                                                                        \
+  };                                                                          \
+  namespace lazy {                                                            \
+  PUSHMI_PP_CAT(PUSHMI_PP_DEF_, TPARAM)                                       \
+  PUSHMI_INLINE_VAR constexpr auto NAME =                                     \
+      PUSHMI_PP_CAT(NAME, Concept)::Eval<PUSHMI_PP_EXPAND ARGS>{};            \
+  }                                                                           \
+  PUSHMI_PP_CAT(PUSHMI_PP_DEF_, TPARAM)                                       \
+  PUSHMI_INLINE_VAR constexpr bool NAME =                                     \
+      static_cast<bool>(                                                      \
+          PUSHMI_PP_CAT(NAME, Concept)::Eval<PUSHMI_PP_EXPAND ARGS>{})      \
+  /**/
 #endif
 
 #define PUSHMI_PP_REQUIRES_PROBE_requires                                      \
@@ -365,11 +383,11 @@ PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN
 #define PUSHMI_TEMPLATE(...)                                                   \
     template<__VA_ARGS__ PUSHMI_TEMPLATE_AUX_
 #define PUSHMI_TEMPLATE_AUX_(...) ,                                            \
-    int (*PUSHMI_PP_CAT(_pushmi_concept_unique_, __LINE__))[                   \
-        PUSHMI_COUNTER] = nullptr,                                             \
-    std::enable_if_t<PUSHMI_PP_CAT(_pushmi_concept_unique_, __LINE__) ||       \
-        bool(PUSHMI_TEMPLATE_AUX_4(PUSHMI_PP_CAT(                              \
-            PUSHMI_TEMPLATE_AUX_3_, __VA_ARGS__))), int> = 0>                  \
+    bool PUSHMI_PP_CAT(_pushmi_false_, __LINE__) = false,                      \
+    std::enable_if_t<                                                          \
+        static_cast<bool>(PUSHMI_TEMPLATE_AUX_4(PUSHMI_PP_CAT(                 \
+            PUSHMI_TEMPLATE_AUX_3_, __VA_ARGS__))) ||                          \
+            PUSHMI_PP_CAT(_pushmi_false_, __LINE__), int> = 0>                 \
     /**/
 #define PUSHMI_TEMPLATE_AUX_3_requires
 #define PUSHMI_TEMPLATE_AUX_4(...)                                             \
@@ -388,7 +406,7 @@ PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN
     PUSHMI_PP_CAT(PUSHMI_TEMPLATE_AUX_6_, __VA_ARGS__)                         \
     /**/
 #define PUSHMI_TEMPLATE_AUX_6_requires(...)                                    \
-    ::pushmi::concepts::detail::requires_<decltype(__VA_ARGS__)>()             \
+    ::pushmi::concepts::detail::requires_<decltype(__VA_ARGS__)>()      \
     /**/
 #endif
 
@@ -401,8 +419,7 @@ PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN
 #else
 #define PUSHMI_BROKEN_SUBSUMPTION(...) __VA_ARGS__
 #define PUSHMI_TYPE_CONSTRAINT(...) class
-// bool() is used to prevent 'error: pasting "PUSHMI_PP_REQUIRES_PROBE_" and "::" does not give a valid preprocessing token'
-#define PUSHMI_EXP(...) bool(::pushmi::expAnd(__VA_ARGS__))
+#define PUSHMI_EXP(...)  decltype(::pushmi::expAnd(__VA_ARGS__)){}
 #define PUSHMI_AND ,
 #endif
 
@@ -410,11 +427,11 @@ PUSHMI_PP_IGNORE_CXX2A_COMPAT_BEGIN
 #if __cpp_concepts
 #define PUSHMI_PP_CONSTRAINED_USING(REQUIRES, NAME, ...)                       \
     requires REQUIRES                                                          \
-  using NAME __VA_ARGS__;                                                      \
+  using NAME __VA_ARGS__                                                       \
   /**/
 #else
 #define PUSHMI_PP_CONSTRAINED_USING(REQUIRES, NAME, ...)                       \
-  using NAME std::enable_if_t<bool(REQUIRES), __VA_ARGS__>;                    \
+  using NAME std::enable_if_t<bool(REQUIRES), __VA_ARGS__>                     \
   /**/
 #endif
 
@@ -425,7 +442,8 @@ using bool_ = std::integral_constant<bool, B>;
 
 namespace concepts {
 namespace detail {
-bool gcc_bugs(...);
+template<class T>
+T gcc_bugs(T);
 
 template <class>
 inline constexpr bool requires_() {
@@ -439,91 +457,91 @@ struct Or;
 
 template <class T>
 struct Not {
-    explicit constexpr operator bool() const noexcept {
-        return !(bool) T{};
-    }
-    PUSHMI_TEMPLATE (class This = Not, bool B)
-        (requires B == (bool) This{})
-    constexpr operator std::integral_constant<bool, B>() const noexcept {
-        return {};
-    }
-    constexpr auto operator!() const noexcept {
-        return T{};
-    }
-    template <class That>
-    constexpr auto operator&&(That) const noexcept {
-        return And<Not, That>{};
-    }
-    template <class That>
-    constexpr auto operator||(That) const noexcept {
-        return Or<Not, That>{};
-    }
+  explicit constexpr operator bool() const noexcept {
+    return !static_cast<bool>(T{});
+  }
+  PUSHMI_TEMPLATE(class This = Not, bool B)
+  (requires B == static_cast<bool>(This{})) constexpr
+  operator std::integral_constant<bool, B>() const noexcept {
+    return {};
+  }
+  constexpr auto operator!() const noexcept {
+    return T{};
+  }
+  template <class That>
+  constexpr auto operator&&(That) const noexcept {
+    return And<Not, That>{};
+  }
+  template <class That>
+  constexpr auto operator||(That) const noexcept {
+    return Or<Not, That>{};
+  }
 };
 
 template <class T, class U>
 struct And {
-    explicit constexpr operator bool() const noexcept {
-        return (bool) std::conditional_t<(bool) T{}, U, std::false_type>{};
-    }
-    PUSHMI_TEMPLATE (class This = And, bool B)
-        (requires B == (bool) This{})
-    constexpr operator std::integral_constant<bool, B>() const noexcept {
-        return {};
-    }
-    constexpr auto operator!() const noexcept {
-        return Not<And>{};
-    }
-    template <class That>
-    constexpr auto operator&&(That) const noexcept {
-        return And<And, That>{};
-    }
-    template <class That>
-    constexpr auto operator||(That) const noexcept {
-        return Or<And, That>{};
-    }
+  explicit constexpr operator bool() const noexcept {
+    return static_cast<bool>(std::conditional_t<static_cast<bool>(T{}), U, std::false_type>{});
+  }
+  PUSHMI_TEMPLATE(class This = And, bool B) //
+  (requires B == static_cast<bool>(This{})) //
+  constexpr operator std::integral_constant<bool, B>() const noexcept {
+    return {};
+  }
+  constexpr auto operator!() const noexcept {
+    return Not<And>{};
+  }
+  template <class That>
+  constexpr auto operator&&(That) const noexcept {
+    return And<And, That>{};
+  }
+  template <class That>
+  constexpr auto operator||(That) const noexcept {
+    return Or<And, That>{};
+  }
 };
 
 template <class T, class U>
 struct Or {
-    explicit constexpr operator bool() const noexcept {
-        return (bool) std::conditional_t<(bool) T{}, std::true_type, U>{};
-    }
-    PUSHMI_TEMPLATE (class This = Or, bool B)
-        (requires B == (bool) This{})
-    constexpr operator std::integral_constant<bool, B>() const noexcept {
-        return {};
-    }
-    constexpr auto operator!() const noexcept {
-        return Not<Or>{};
-    }
-    template <class That>
-    constexpr auto operator&&(That) const noexcept {
-        return And<Or, That>{};
-    }
-    template <class That>
-    constexpr auto operator||(That) const noexcept {
-        return Or<Or, That>{};
-    }
+  explicit constexpr operator bool() const noexcept {
+    return static_cast<bool>(std::conditional_t<static_cast<bool>(T{}), std::true_type, U>{});
+  }
+  PUSHMI_TEMPLATE(class This = Or, bool B)  //
+  (requires B == static_cast<bool>(This{})) //
+  constexpr operator std::integral_constant<bool, B>() const noexcept {
+    return {};
+  }
+  constexpr auto operator!() const noexcept {
+    return Not<Or>{};
+  }
+  template <class That>
+  constexpr auto operator&&(That) const noexcept {
+    return And<Or, That>{};
+  }
+  template <class That>
+  constexpr auto operator||(That) const noexcept {
+    return Or<Or, That>{};
+  }
 };
 } // namespace detail
 } // namespace concepts
 
 namespace isolated {
 
-template<class T0>
+template <class T0>
 constexpr auto expAnd(T0&& t0) {
-  return (T0&&)t0;
+  return (T0 &&) t0;
 }
-template<class T0, class... TN>
-constexpr auto expAnd(T0&& t0, TN&&... tn) {
-  return concepts::detail::And<T0, decltype(isolated::expAnd((TN&&)tn...))>{};
-}
-
+template <class T0, class... TN>
+constexpr auto expAnd(T0&&, TN&&... tn) {
+  return concepts::detail::And<T0, decltype(isolated::expAnd((TN &&) tn...))>{};
 }
 
-template<class... TN>
+} // namespace isolated
+
+template <class... TN>
 constexpr auto expAnd(TN&&... tn) {
-  return isolated::expAnd((TN&&)tn...);
+  return isolated::expAnd((TN &&) tn...);
 }
 
 template <class T>
@@ -532,8 +550,7 @@ constexpr bool implicitly_convertible_to(T) {
 }
 #ifdef __clang__
 template <bool B>
-std::enable_if_t<B> requires_()
-{}
+std::enable_if_t<B> requires_() {}
 #else
 template <bool B>
 PUSHMI_INLINE_VAR constexpr std::enable_if_t<B, int> requires_ = 0;
