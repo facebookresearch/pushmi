@@ -3,8 +3,6 @@ cmake_minimum_required(VERSION 3.7)
 
 project(pushmi-project CXX)
 
-#
-
 option(PUSHMI_USE_CONCEPTS_EMULATION "Use C++14 Concepts Emulation" ON)
 option(PUSHMI_USE_CPP_2A "Use C++2a with concepts emulation" OFF)
 option(PUSHMI_USE_CPP_17 "Use C++17 with concepts emulation" OFF)
@@ -82,6 +80,11 @@ target_compile_options(pushmi INTERFACE
     $<$<CXX_COMPILER_ID:Clang>:-stdlib=libc++>
     $<$<CXX_COMPILER_ID:AppleClang>:-stdlib=libc++>)
 
+# target_compile_options(pushmi INTERFACE
+#     $<$<CXX_COMPILER_ID:Clang>:-fsanitize=thread -fno-omit-frame-pointer>)
+# target_link_options(pushmi INTERFACE
+#     $<$<CXX_COMPILER_ID:Clang>:-fsanitize=thread>)
+
 if (PUSHMI_CONCEPTS)
     target_compile_options(pushmi INTERFACE $<$<CXX_COMPILER_ID:GNU>:-fconcepts>)
 endif ()
@@ -112,10 +115,42 @@ install(
 install(TARGETS pushmi EXPORT pushmi-project)
 install(EXPORT pushmi-project DESTINATION pushmi-project)
 
-add_subdirectory(examples)
-
-add_subdirectory(benchmarks)
+# add_subdirectory(examples)
+# add_subdirectory(benchmarks)
 
 enable_testing()
+
+# Download and unpack googletest at configure time
+configure_file(cmake/CMakeLists.txt.in googletest-download/CMakeLists.txt)
+execute_process(COMMAND ${CMAKE_COMMAND} -G "${CMAKE_GENERATOR}" .
+  RESULT_VARIABLE result
+  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/googletest-download )
+if(result)
+  message(FATAL_ERROR "CMake step for googletest failed: ${result}")
+endif()
+execute_process(COMMAND ${CMAKE_COMMAND} --build .
+  RESULT_VARIABLE result
+  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/googletest-download )
+if(result)
+  message(FATAL_ERROR "Build step for googletest failed: ${result}")
+endif()
+
+# Prevent overriding the parent project's compiler/linker
+# settings on Windows
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+
+# Add googletest directly to our build. This defines
+# the gtest and gtest_main targets.
+add_subdirectory(${CMAKE_CURRENT_BINARY_DIR}/googletest-src
+                 ${CMAKE_CURRENT_BINARY_DIR}/googletest-build
+                 EXCLUDE_FROM_ALL)
+
+# The gtest/gtest_main targets carry header search path
+# dependencies automatically when using CMake 2.8.11 or
+# later. Otherwise we have to add them here ourselves.
+if (CMAKE_VERSION VERSION_LESS 2.8.11)
+  include_directories("${gtest_SOURCE_DIR}/include")
+endif()
+
 include(CTest)
 add_subdirectory(test)

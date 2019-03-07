@@ -191,10 +191,10 @@ install:
   - if [ -n "$CLANG_VERSION" -a "$MSAN" == "On" -a "$LIBCXX" == "On" ]; then CXX_FLAGS="${CXX_FLAGS} -fsanitize=memory"; fi
   - if [ -n "$GCC_VERSION" -a "$CONCEPTS" == "On" ]; then CXX_FLAGS="${CXX_FLAGS} -fconcepts"; fi
   - cmake .. -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_CXX_FLAGS="${CXX_FLAGS}" -DCMAKE_EXE_LINKER_FLAGS="${CXX_LINKER_FLAGS}" -DCMAKE_CXX_STANDARD=$CPP -DPUSHMI_CONCEPTS=$CONCEPTS -Wdev
-  - make -j2 VERBOSE=1
+  - make VERBOSE=1
 
 script:
-  - ctest -j2 -VV ${CTEST_FLAGS}
+  - ctest -VV ${CTEST_FLAGS}
 
 notifications:
   email: false

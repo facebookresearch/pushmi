@@ -1,40 +1,29 @@
-add_library(catch STATIC catch.cpp)
-
-target_include_directories(catch PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../external/Catch2/single_include>
-    $<INSTALL_INTERFACE:$<INSTALL_PREFIX>/include/Catch2>)
-
-target_link_libraries(catch
-    pushmi)
-
-include(../external/Catch2/contrib/Catch.cmake)
-
 
 if(NOT ${CMAKE_VERSION} VERSION_LESS "3.10.0" AND NOT PUSHMI_ONE_TEST_BINARY)
 
 add_executable(FlowTest FlowTest.cpp)
-target_link_libraries(FlowTest pushmi catch Threads::Threads)
-catch_discover_tests(FlowTest)
+target_link_libraries(FlowTest pushmi gtest_main gmock_main Threads::Threads)
+add_test(NAME FlowTest COMMAND FlowTest)
 
 add_executable(FlowManyTest FlowManyTest.cpp)
-target_link_libraries(FlowManyTest pushmi catch Threads::Threads)
-catch_discover_tests(FlowManyTest)
+target_link_libraries(FlowManyTest pushmi gtest_main gmock_main Threads::Threads)
+add_test(NAME FlowManyTest COMMAND FlowManyTest)
 
 add_executable(CompileTest CompileTest.cpp)
-target_link_libraries(CompileTest pushmi catch Threads::Threads)
-# catch_discover_tests(CompileTest)
+target_link_libraries(CompileTest pushmi gtest_main gmock_main Threads::Threads)
+add_test(NAME CompileTest COMMAND CompileTest)
 
 add_executable(NewThreadTest NewThreadTest.cpp)
-target_link_libraries(NewThreadTest pushmi catch Threads::Threads)
-catch_discover_tests(NewThreadTest)
+target_link_libraries(NewThreadTest pushmi gtest_main gmock_main Threads::Threads)
+add_test(NAME NewThreadTest COMMAND NewThreadTest)
 
 add_executable(TrampolineTest TrampolineTest.cpp)
-target_link_libraries(TrampolineTest pushmi catch Threads::Threads)
-catch_discover_tests(TrampolineTest)
+target_link_libraries(TrampolineTest pushmi gtest_main gmock_main Threads::Threads)
+add_test(NAME TrampolineTest COMMAND TrampolineTest)
 
 add_executable(PushmiTest PushmiTest.cpp)
-target_link_libraries(PushmiTest pushmi catch Threads::Threads)
-catch_discover_tests(PushmiTest)
+target_link_libraries(PushmiTest pushmi gtest_main gmock_main Threads::Threads)
+add_test(NAME PushmiTest COMMAND PushmiTest)
 
 else()
 
@@ -46,7 +35,7 @@ add_executable(PushmiTest PushmiTest.cpp
   FlowManyTest.cpp
   )
 
-target_link_libraries(PushmiTest pushmi catch Threads::Threads)
-catch_discover_tests(PushmiTest)
+target_link_libraries(PushmiTest pushmi gtest_main gmock_main Threads::Threads)
+add_test(NAME PushmiTest COMMAND PushmiTest)
 
 endif()

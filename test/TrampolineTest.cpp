@@ -1,139 +1,140 @@
-// Copyright (c) 2018-present, Facebook, Inc.
-//
-// This source code is licensed under the MIT license found in the
-// LICENSE file in the root directory of this source tree.
-
-#include "catch.hpp"
-
-#include <type_traits>
+/*
+ * Copyright 2018-present Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 #include <chrono>
+#include <type_traits>
+#include <string>
+
 using namespace std::literals;
 
-#include "pushmi/flow_single_sender.h"
-#include "pushmi/o/empty.h"
-#include "pushmi/o/just.h"
-#include "pushmi/o/on.h"
-#include "pushmi/o/transform.h"
-#include "pushmi/o/tap.h"
-#include "pushmi/o/via.h"
-#include "pushmi/o/submit.h"
-#include "pushmi/o/extension_operators.h"
+#include <pushmi/flow_single_sender.h>
+#include <pushmi/o/empty.h>
+#include <pushmi/o/extension_operators.h>
+#include <pushmi/o/just.h>
+#include <pushmi/o/on.h>
+#include <pushmi/o/submit.h>
+#include <pushmi/o/tap.h>
+#include <pushmi/o/transform.h>
+#include <pushmi/o/via.h>
 
-#include "pushmi/inline.h"
-#include "pushmi/trampoline.h"
+#include <pushmi/inline.h>
+#include <pushmi/trampoline.h>
 
 using namespace pushmi::aliases;
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
+using namespace testing;
+
 struct countdownsingle {
-  countdownsingle(int& c)
-      : counter(&c) {}
+  explicit countdownsingle(int& c) : counter(&c) {}
 
   int* counter;
 
   template <class ExecutorRef>
   void operator()(ExecutorRef exec) {
     if (--*counter > 0) {
-      exec | op::submit(*this);
+      exec | op::schedule() | op::submit(*this);
     }
   }
 };
 
-SCENARIO( "trampoline executor", "[trampoline][sender]" ) {
+using TR = decltype(mi::trampoline());
 
-  GIVEN( "A trampoline single_sender" ) {
-    auto tr = v::trampoline();
-    using TR = decltype(tr);
+class TrampolineExecutor : public Test {
+ protected:
+  TR tr_{mi::trampoline()};
+};
 
-    WHEN( "submit" ) {
-      auto signals = 0;
-      tr |
-        op::transform([](auto){ return 42; }) |
-        op::submit(
-          [&](auto){
-            signals += 100; },
-          [&](auto e) noexcept { signals += 1000; },
-          [&](){ signals += 10; });
+TEST_F(TrampolineExecutor, TransformAndSubmit) {
+  auto signals = 0;
+  tr_ | op::schedule() | op::transform([](auto) { return 42; }) |
+      op::submit(
+          [&](auto) { signals += 100; },
+          [&](auto) noexcept { signals += 1000; },
+          [&]() { signals += 10; });
 
-      THEN( "the value and done signals are each recorded once" ) {
-        REQUIRE( signals == 110 );
-      }
-    }
+  EXPECT_THAT(signals, Eq(110))
+      << "expected that the value and done signals are each recorded once";
+}
 
-    WHEN( "blocking get" ) {
-      auto v = tr |
-        op::transform([](auto){ return 42; }) |
-        op::get<int>;
+TEST_F(TrampolineExecutor, BlockingGet) {
+  auto v = tr_ | op::schedule() | op::transform([](auto) { return 42; }) | op::get<int>;
 
-      THEN( "the result is" ) {
-        REQUIRE( v == 42 );
-      }
-    }
+  EXPECT_THAT(v, Eq(42)) << "expected that the result would be different";
+}
 
-    WHEN( "virtual derecursion is triggered" ) {
-      int counter = 100'000;
-      std::function<void(pushmi::any_executor_ref<> exec)> recurse;
-      recurse = [&](pushmi::any_executor_ref<> tr) {
-        if (--counter <= 0)
-          return;
-        tr | op::submit(recurse);
-      };
-      tr | op::submit([&](auto exec) { recurse(exec); });
+TEST_F(TrampolineExecutor, VirtualDerecursion) {
+  int counter = 100'000;
+  std::function<void(::pushmi::any_executor_ref<> exec)> recurse;
+  recurse = [&](::pushmi::any_executor_ref<> tr) {
+    if (--counter <= 0)
+      return;
+    tr | op::schedule() | op::submit(recurse);
+  };
+  tr_ | op::schedule() | op::submit([&](auto exec) { recurse(exec); });
 
-      THEN( "all nested submissions complete" ) {
-        REQUIRE( counter == 0 );
-      }
-    }
+  EXPECT_THAT(counter, Eq(0))
+      << "expected that all nested submissions complete";
+}
 
-    WHEN( "static derecursion is triggered" ) {
-      int counter = 100'000;
-      countdownsingle single{counter};
-      tr | op::submit(single);
-      THEN( "all nested submissions complete" ) {
-        REQUIRE( counter == 0 );
-      }
-    }
+TEST_F(TrampolineExecutor, StaticDerecursion) {
+  int counter = 100'000;
+  countdownsingle single{counter};
+  tr_ | op::schedule() | op::submit(single);
 
-    WHEN( "used with on" ) {
-      std::vector<std::string> values;
-      auto sender = pushmi::make_single_sender([](auto out) {
-        ::pushmi::set_value(out, 2.0);
-        ::pushmi::set_done(out);
-        // ignored
-        ::pushmi::set_value(out, 1);
-        ::pushmi::set_value(out, std::numeric_limits<int8_t>::min());
-        ::pushmi::set_value(out, std::numeric_limits<int8_t>::max());
-      });
-      auto inlineon = sender | op::on([&](){return mi::inline_executor();});
-      inlineon |
-          op::submit(v::on_value([&](auto v) { values.push_back(std::to_string(v)); }));
-      THEN( "only the first item was pushed" ) {
-        REQUIRE(values == std::vector<std::string>{"2.000000"});
-      }
-      THEN( "executor was not changed by on" ) {
-        REQUIRE(std::is_same<mi::executor_t<decltype(sender)>, mi::executor_t<decltype(inlineon)>>::value);
-      }
-    }
+  EXPECT_THAT(counter, Eq(0))
+      << "expected that all nested submissions complete";
+}
 
-    WHEN( "used with via" ) {
-      std::vector<std::string> values;
-      auto sender = pushmi::make_single_sender([](auto out) {
-        ::pushmi::set_value(out, 2.0);
-        ::pushmi::set_done(out);
-        // ignored
-        ::pushmi::set_value(out, 1);
-        ::pushmi::set_value(out, std::numeric_limits<int8_t>::min());
-        ::pushmi::set_value(out, std::numeric_limits<int8_t>::max());
-      });
-      auto inlinevia = sender | op::via([&](){return mi::inline_executor();});
-      inlinevia |
-          op::submit(v::on_value([&](auto v) { values.push_back(std::to_string(v)); }));
-      THEN( "only the first item was pushed" ) {
-        REQUIRE(values == std::vector<std::string>{"2.000000"});
-      }
-      THEN( "executor was changed by via" ) {
-        REQUIRE(!std::is_same<mi::executor_t<decltype(sender)>, mi::executor_t<decltype(inlinevia)>>::value);
-      }
-    }
-  }
+TEST_F(TrampolineExecutor, UsedWithOn) {
+  std::vector<std::string> values;
+  auto sender = ::pushmi::make_single_sender([](auto out) {
+    ::pushmi::set_value(out, 2.0);
+    ::pushmi::set_done(out);
+    // ignored
+    ::pushmi::set_value(out, 1);
+    ::pushmi::set_value(out, std::numeric_limits<int8_t>::min());
+    ::pushmi::set_value(out, std::numeric_limits<int8_t>::max());
+  });
+  auto inlineon = sender | op::on([&]() { return mi::inline_executor(); });
+  inlineon | op::submit(v::on_value([&](auto v) {
+    values.push_back(std::to_string(v));
+  }));
+
+  EXPECT_THAT(values, ElementsAre(std::to_string(2.0)))
+      << "expected that only the first item was pushed";
+}
+
+TEST_F(TrampolineExecutor, UsedWithVia) {
+  std::vector<std::string> values;
+  auto sender = ::pushmi::make_single_sender([](auto out) {
+    ::pushmi::set_value(out, 2.0);
+    ::pushmi::set_done(out);
+    // ignored
+    ::pushmi::set_value(out, 1);
+    ::pushmi::set_value(out, std::numeric_limits<int8_t>::min());
+    ::pushmi::set_value(out, std::numeric_limits<int8_t>::max());
+  });
+  auto inlinevia = sender | op::via([&]() { return mi::inline_executor(); });
+  inlinevia | op::submit(v::on_value([&](auto v) {
+    values.push_back(std::to_string(v));
+  }));
+
+  EXPECT_THAT(values, ElementsAre(std::to_string(2.0)))
+      << "expected that only the first item was pushed";
 }
