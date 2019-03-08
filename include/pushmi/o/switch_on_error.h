@@ -34,10 +34,7 @@ struct switch_on_error_fn {
       static_assert(
           ::pushmi::NothrowInvocable<ErrorSelector&, E>,
           "switch_on_error - error selector function must be noexcept");
-      auto next = es_((E &&) e);
-      submit(std::move(next), ::pushmi::detail::receiver_from_fn<decltype(next)>()(
-          std::move(out),
-          ::pushmi::on_error(on_error_impl<ErrorSelector>{std::move(es_)})));
+      submit(es_((E &&) e), out);
     }
   };
   template <class In, class ErrorSelector>

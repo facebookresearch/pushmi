@@ -78,6 +78,7 @@ void inline_driver(
         }
         auto result = selector(std::move(acc));
         mi::set_value(out, std::move(result));
+        mi::set_done(out);
     } catch(...) {
         mi::set_error(out, std::current_exception());
     }

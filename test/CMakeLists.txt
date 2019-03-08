@@ -1,3 +1,7 @@
+# Copyright (c) 2018-present, Facebook, Inc.
+#
+# This source code is licensed under the Apache License found in the
+# LICENSE file in the root directory of this source tree.
 
 if(NOT ${CMAKE_VERSION} VERSION_LESS "3.10.0" AND NOT PUSHMI_ONE_TEST_BINARY)
 

@@ -4,7 +4,7 @@
 
 // Copyright (c) 2018-present, Facebook, Inc.
 //
-// This source code is licensed under the MIT license found in the
+// This source code is licensed under the Apache License found in the
 // LICENSE file in the root directory of this source tree.
 
 #include <cstddef>
@@ -1736,10 +1736,17 @@ template <class E>
 struct single_error_impl {
   E e_;
   PUSHMI_TEMPLATE(class Base, class Out)
+  (requires ReceiveError<Out, const E&>)
+  void operator()(
+      Base&&,
+      Out&& out) const & {
+    set_error(out, e_);
+  }
+  PUSHMI_TEMPLATE(class Base, class Out)
   (requires ReceiveError<Out, E>)
   void operator()(
       Base&&,
-      Out&& out) {
+      Out&& out) && {
     set_error(out, std::move(e_));
   }
 };
@@ -1793,10 +1800,7 @@ struct switch_on_error_fn {
       static_assert(
           ::pushmi::NothrowInvocable<ErrorSelector&, E>,
           "switch_on_error - error selector function must be noexcept");
-      auto next = es_((E &&) e);
-      submit(std::move(next), ::pushmi::detail::receiver_from_fn<decltype(next)>()(
-          std::move(out),
-          ::pushmi::on_error(on_error_impl<ErrorSelector>{std::move(es_)})));
+      submit(es_((E &&) e), out);
     }
   };
   template <class In, class ErrorSelector>
@@ -9885,7 +9889,7 @@ struct any {
 
 // Copyright (c) 2018-present, Facebook, Inc.
 //
-// This source code is licensed under the MIT license found in the
+// This source code is licensed under the Apache License found in the
 // LICENSE file in the root directory of this source tree.
 
 #endif // PUSHMI_SINGLE_HEADER

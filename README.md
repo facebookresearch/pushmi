@@ -238,3 +238,8 @@ auto values = std::array<int, 5>{4, 20, 7, 3, 8};
 auto f = op::flow_from(values) |
     op::for_each([&](int){});
 ```
+
+## License
+
+The contents of this repo are licensed under the Apache License found in the
+LICENSE file in the root directory of this repo.

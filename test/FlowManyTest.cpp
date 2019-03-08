@@ -26,7 +26,6 @@ using namespace std::literals;
 #include <pushmi/o/from.h>
 #include <pushmi/o/submit.h>
 
-#include <pushmi/entangle.h>
 #include <pushmi/new_thread.h>
 #include <pushmi/time_source.h>
 #include <pushmi/trampoline.h>

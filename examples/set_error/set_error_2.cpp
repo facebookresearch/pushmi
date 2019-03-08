@@ -1,85 +1,89 @@
-// Copyright (c) 2018-present, Facebook, Inc.
-//
-// This source code is licensed under the MIT license found in the
-// LICENSE file in the root directory of this source tree.
-
-#include <vector>
+/*
+ * Copyright 2018-present Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <vector>
 
-#include <pushmi/o/just.h>
-#include <pushmi/o/error.h>
+#include "../no_fail.h"
 #include <pushmi/o/empty.h>
-#include <pushmi/o/transform.h>
+#include <pushmi/o/error.h>
+#include <pushmi/o/just.h>
 #include <pushmi/o/switch_on_error.h>
-#include <no_fail.h>
+#include <pushmi/o/transform.h>
 
 using namespace pushmi::aliases;
 
 // concat not yet implemented
-template<class T, class E = std::exception_ptr>
-auto concat =
-  [](auto in){
-    return mi::make_single_sender(
-      [in](auto out) mutable {
-        ::pushmi::submit(in, mi::make_receiver(out,
-        [](auto out, auto v){
-          ::pushmi::submit(v, mi::any_receiver<E, T>(out));
-        }));
-      });
+template <class T, class E = std::exception_ptr>
+auto concat() {
+  return [](auto in) {
+    return mi::make_single_sender([in](auto out) mutable {
+      mi::submit(in, mi::make_receiver(out, [](auto out_, auto v) {
+                   mi::submit(v, mi::any_receiver<E, T>(out_));
+                 }));
+    });
   };
+}
 
-int main()
-{
+int main() {
   auto stop_abort = mi::on_error([](auto) noexcept {});
   // support all error value types
 
-  op::error(std::exception_ptr{}) |
-    op::submit(stop_abort);
+  op::error(std::exception_ptr{}) | op::submit(stop_abort);
+
+  op::error(std::errc::argument_list_too_long) | op::submit(stop_abort);
+
+  // transform an error
 
   op::error(std::errc::argument_list_too_long) |
-    op::submit(stop_abort);
-
-// transform an error
-
-  op::error(std::errc::argument_list_too_long) |
-    op::switch_on_error([](auto e) noexcept { return op::error(std::exception_ptr{}); }) |
-    op::submit(stop_abort);
-
-// use default value if an error occurs
-
-  op::just(42) |
-    op::switch_on_error([](auto e) noexcept { return op::just(0); }) |
-    op::submit();
-
-// suppress if an error occurs
-
-  op::error(std::errc::argument_list_too_long) |
-    op::switch_on_error([](auto e) noexcept { return op::empty(); }) |
-    op::submit();
-
-// abort if an error occurs
-
-  op::just(42) |
-    op::no_fail() |
-    op::submit();
-
-// transform value to error_
-
-  op::just(42) |
-    op::transform([](auto v) {
-      using r_t = mi::any_single_sender<std::exception_ptr, int>;
-      if (v < 40) {
-        return r_t{op::error<int>(std::exception_ptr{})};
-      } else {
-        return r_t{op::just(v)};
-      }
+    op::switch_on_error([](auto) noexcept {
+      return op::error(std::exception_ptr{});
     }) |
-    concat<int> |
-    op::submit();
+    op::submit(stop_abort);
 
-// retry on error
+  // use default value if an error occurs
+
+  op::just(42) |
+      op::switch_on_error([](auto) noexcept { return op::just(0); }) |
+      op::submit();
+
+  // suppress if an error occurs
+
+  op::error(std::errc::argument_list_too_long) |
+      op::switch_on_error([](auto) noexcept { return op::empty(); }) |
+      op::submit();
+
+  // abort if an error occurs
+
+  op::just(42) | op::no_fail() | op::submit();
+
+  // transform value to error_
+
+  op::just(42) | op::transform([](auto v) {
+    using r_t = mi::any_single_sender<std::exception_ptr, int>;
+    if (v < 40) {
+      return r_t{op::error(std::exception_ptr{})};
+    } else {
+      return r_t{op::just(v)};
+    }
+  }) | concat<int>() |
+      op::submit();
+
+  // retry on error
 
   // http.get(ex) |
   //   op::timeout(ex, 1s) |

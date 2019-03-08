@@ -1,3 +1,7 @@
+# Copyright (c) 2018-present, Facebook, Inc.
+#
+# This source code is licensed under the Apache License found in the
+# LICENSE file in the root directory of this source tree.
 
 cmake_minimum_required(VERSION 3.7)
 
@@ -115,7 +119,7 @@ install(
 install(TARGETS pushmi EXPORT pushmi-project)
 install(EXPORT pushmi-project DESTINATION pushmi-project)
 
-# add_subdirectory(examples)
+add_subdirectory(examples)
 # add_subdirectory(benchmarks)
 
 enable_testing()
