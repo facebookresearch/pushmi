@@ -5,7 +5,7 @@ This library is counterpart to [P1055 - *A Modest Executor Proposal*](http://wg2
 
 *pushmi* is a header-only library that uses git submodules for dependencies (`git clone --recursive`), uses CMake to build, requires compliant C++14 compiler to build and has dependencies on meta and catch2 and some other libraries for testing and examples.
 
-[![godbolt](https://img.shields.io/badge/godbolt-master-brightgreen.svg?style=flat-square)](https://godbolt.org/z/vCUK0M)
+[![godbolt](https://img.shields.io/badge/godbolt-master-brightgreen.svg?style=flat-square)](https://godbolt.org/z/orAXMq)
 
 *pushmi* is an implementation for prototyping how Futures, Executors can be defined with shared Concepts. These Concepts can be implemented over and over again to solve different problems and make different tradeoffs. User implementations of the Concepts are first-class citizens due to the attention to composition. Composition also enables each implementation of the Concepts to focus on one concern and then be composed to build more complex solutions.
 
@@ -188,7 +188,7 @@ auto tsd1 = any_time_single_sender<std::exception_ptr, std::system_clock::time_p
 
 ## put it all together with some algorithms
 
-[![godbolt](https://img.shields.io/badge/godbolt-master-brightgreen.svg?style=flat-square)](https://godbolt.org/z/vCUK0M)
+[![godbolt](https://img.shields.io/badge/godbolt-master-brightgreen.svg?style=flat-square)](https://godbolt.org/z/orAXMq)
 
 ### Executor
 
@@ -219,7 +219,7 @@ just(42) |
 
 ### Many
 
-[![godbolt](https://img.shields.io/badge/godbolt-master-brightgreen.svg?style=flat-square)](https://godbolt.org/z/woVAi9)
+[![godbolt](https://img.shields.io/badge/godbolt-master-brightgreen.svg?style=flat-square)](https://godbolt.org/z/mNWANO)
 
 ```cpp
 auto values = std::array<int, 5>{4, 20, 7, 3, 8};
@@ -230,7 +230,7 @@ auto f = op::from(values) |
 
 ### FlowMany
 
-[![godbolt](https://img.shields.io/badge/godbolt-master-brightgreen.svg?style=flat-square)](https://godbolt.org/z/woVAi9)
+[![godbolt](https://img.shields.io/badge/godbolt-master-brightgreen.svg?style=flat-square)](https://godbolt.org/z/mNWANO)
 
 ```cpp
 auto values = std::array<int, 5>{4, 20, 7, 3, 8};
