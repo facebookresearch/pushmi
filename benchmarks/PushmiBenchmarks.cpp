@@ -79,15 +79,14 @@ using countdownflowmany = countdown<decltype(mi::make_flow_receiver)>;
 struct inline_time_executor {
   using properties = mi::property_set<
       mi::is_executor<>,
-      mi::is_constrained<>,
-      mi::is_always_blocking<>,
+      mi::is_time<>,
       mi::is_fifo_sequence<>>;
 
   struct task {
     std::chrono::system_clock::time_point at;
     using properties = mi::property_set<
         mi::is_sender<>,
-        mi::is_time<>,
+        mi::is_always_blocking<>,
         mi::is_single<>>;
 
     template <class Out>
@@ -112,12 +111,12 @@ struct inline_time_executor {
 struct inline_executor {
   using properties = mi::property_set<
       mi::is_executor<>,
-      mi::is_always_blocking<>,
       mi::is_fifo_sequence<>>;
 
   struct task {
     using properties = mi::property_set<
         mi::is_sender<>,
+        mi::is_always_blocking<>,
         mi::is_single<>>;
 
     template <class Out>
@@ -137,7 +136,6 @@ struct inline_executor_flow_single {
 
   using properties = mi::property_set<
       mi::is_executor<>,
-      mi::is_maybe_blocking<>,
       mi::is_fifo_sequence<>>;
 
   struct task {
@@ -146,6 +144,7 @@ struct inline_executor_flow_single {
     using properties = mi::property_set<
         mi::is_sender<>,
         mi::is_flow<>,
+        mi::is_maybe_blocking<>,
         mi::is_single<>>;
 
     template <class Out>
@@ -222,13 +221,13 @@ using inline_executor_flow_single_entangled =
 struct inline_executor_flow_single_ignore {
   using properties = mi::property_set<
       mi::is_executor<>,
-      mi::is_fifo_sequence<>,
-      mi::is_maybe_blocking<>>;
+      mi::is_fifo_sequence<>>;
 
   struct task {
     using properties = mi::property_set<
         mi::is_sender<>,
         mi::is_flow<>,
+        mi::is_maybe_blocking<>,
         mi::is_single<>>;
 
     template <class Out>
@@ -253,8 +252,7 @@ struct inline_executor_flow_many {
 
   using properties = mi::property_set<
       mi::is_executor<>,
-      mi::is_fifo_sequence<>,
-      mi::is_maybe_blocking<>>;
+      mi::is_fifo_sequence<>>;
 
   struct task {
     std::atomic<int>* counter = nullptr;
@@ -262,6 +260,7 @@ struct inline_executor_flow_many {
     using properties = mi::property_set<
         mi::is_sender<>,
         mi::is_flow<>,
+        mi::is_maybe_blocking<>,
         mi::is_many<>>;
 
     template <class Out>
@@ -319,13 +318,13 @@ struct inline_executor_flow_many {
 struct inline_executor_flow_many_ignore {
   using properties = mi::property_set<
       mi::is_executor<>,
-      mi::is_fifo_sequence<>,
-      mi::is_always_blocking<>>;
+      mi::is_fifo_sequence<>>;
 
   struct task {
     using properties = mi::property_set<
         mi::is_sender<>,
         mi::is_flow<>,
+        mi::is_always_blocking<>,
         mi::is_many<>>;
     template <class Out>
     void submit(Out out) {
@@ -344,12 +343,12 @@ struct inline_executor_flow_many_ignore {
 struct inline_executor_many {
   using properties = mi::property_set<
       mi::is_executor<>,
-      mi::is_fifo_sequence<>,
-      mi::is_always_blocking<>>;
+      mi::is_fifo_sequence<>>;
 
   struct task {
     using properties = mi::property_set<
         mi::is_sender<>,
+        mi::is_always_blocking<>,
         mi::is_many<>>;
     template <class Out>
     void submit(Out out) {
@@ -366,14 +365,16 @@ struct inline_executor_many {
 #define concept Concept
 #include <nonius/nonius.h++>
 
+//*
 NONIUS_BENCHMARK("ready 1'000 single get (submit)", [](nonius::chronometer meter){
   int counter{0};
   meter.measure([&]{
     counter = 1'000;
+    std::atomic<int> result{0};
     while (--counter >=0) {
-      auto fortyTwo = op::just(42) | op::get<int>;
+      result += op::just(42) | op::get<int>;
     }
-    return counter;
+    return result.load();
   });
 })
 
@@ -381,12 +382,14 @@ NONIUS_BENCHMARK("ready 1'000 single get (blocking_submit)", [](nonius::chronome
   int counter{0};
   meter.measure([&]{
     counter = 1'000;
+    std::atomic<int> result{0};
     while (--counter >=0) {
-      auto fortyTwo = mi::make_single_sender([](auto out){ mi::set_value(out, 42); mi::set_done(out);}) | op::get<int>;
+      result += mi::make_single_sender([](auto out){ mi::set_value(out, 42); mi::set_done(out);}) | op::get<int>;
     }
-    return counter;
+    return result.load();
   });
 })
+//*/
 
 NONIUS_BENCHMARK("inline 1'000 single", [](nonius::chronometer meter){
   std::atomic<int> counter{0};
@@ -617,7 +620,7 @@ NONIUS_BENCHMARK("new thread submit 1'000", [](nonius::chronometer meter){
   });
 })
 
-/*
+
 NONIUS_BENCHMARK("new thread blocking_submit 1'000", [](nonius::chronometer meter){
   auto nt = mi::new_thread();
   using NT = decltype(nt);
@@ -629,7 +632,6 @@ NONIUS_BENCHMARK("new thread blocking_submit 1'000", [](nonius::chronometer mete
     return counter.load();
   });
 })
-//*/
 
 NONIUS_BENCHMARK("new thread + time submit 1'000", [](nonius::chronometer meter){
   auto nt = mi::new_thread();

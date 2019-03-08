@@ -8139,10 +8139,28 @@ struct submit_fn {
 struct blocking_submit_fn {
  private:
   struct lock_state {
-    bool done{false};
-    std::atomic<int> nested{0};
+    std::atomic<bool> notified{false}; // ensures that state survives until
+                                       // the stack is unwound
+    std::atomic<bool> done{false}; // ensures that blocking completes after
+                                   // the source called done/error
+    std::atomic<int> nested{0}; // tracks the pending nested executors
+                                // and executions
     std::mutex lock;
     std::condition_variable signaled;
+  };
+
+  struct protect_stack {
+    lock_state* state_;
+    ~protect_stack() {
+      if (--state_->nested == 0) {
+        std::unique_lock<std::mutex> guard{state_->lock};
+        state_->signaled.notify_all();
+        state_->notified.exchange(true);
+      }
+    }
+    protect_stack(lock_state* state) : state_(state) {
+      ++state_->nested;
+    }
   };
 
   template<class Task>
@@ -8183,6 +8201,7 @@ struct blocking_submit_fn {
     }
     template<class... VN>
     auto schedule(VN&&... vn) {
+      auto protected_scope = protect_stack{state_};
       return nested_task_impl<decltype(::pushmi::schedule(ex_, (VN&&)vn...))>{
           state_, ::pushmi::schedule(ex_, (VN&&)vn...)};
     }
@@ -8200,7 +8219,8 @@ struct blocking_submit_fn {
     PUSHMI_TEMPLATE(class Out)
     (requires Receiver<Out>) //
         void submit(Out out) && {
-      ++state_->nested;
+      auto protected_scope = protect_stack{state_};
+      ++state_->nested; // reversed in nested_receiver_impl ::done/::error
       ::pushmi::submit(
           std::move(t_), nested_receiver_impl<Out>{state_, std::move(out)});
     }
@@ -8217,31 +8237,21 @@ struct blocking_submit_fn {
 
     template <class V>
     void value(V&& v) {
-      std::exception_ptr e;
+      auto protected_scope = protect_stack{state_};
       using executor_t = remove_cvref_t<V>;
       auto n = nested_executor_impl<executor_t>::make(state_, (V &&) v);
       set_value(out_, n);
     }
     template <class E>
     void error(E&& e) noexcept {
+      auto protected_scope = protect_stack{state_};
       set_error(out_, (E &&) e);
-      if (--state_->nested == 0) {
-        state_->signaled.notify_all();
-      }
+      --state_->nested; // reverses nested_task_impl::submit
     }
     void done() {
-      std::exception_ptr e;
-      try {
-        set_done(out_);
-      } catch (...) {
-        e = std::current_exception();
-      }
-      if (--state_->nested == 0) {
-        state_->signaled.notify_all();
-      }
-      if (e) {
-        std::rethrow_exception(e);
-      }
+      auto protected_scope = protect_stack{state_};
+      set_done(out_);
+      --state_->nested; // reverses nested_task_impl::submit
     }
   };
   struct nested_executor_impl_fn {
@@ -8263,12 +8273,8 @@ struct blocking_submit_fn {
             std::decay_t<Value>>>) //
         void
         operator()(Out out, Value&& v) const {
-      ++state_->nested;
+      auto protected_scope = protect_stack{state_};
       set_value(out, nested_executor_impl_fn{}(state_, (Value &&) v));
-      if (--state_->nested == 0) {
-        std::unique_lock<std::mutex> guard{state_->lock};
-        state_->signaled.notify_all();
-      }
     }
     PUSHMI_TEMPLATE(class Out, class... VN)
     (requires True<>&& ReceiveValue<Out, VN...> &&
@@ -8284,10 +8290,10 @@ struct blocking_submit_fn {
     (requires ReceiveError<Out, E>) //
         void
         operator()(Out out, E e) const noexcept {
+      auto protected_scope = protect_stack{state_};
       set_error(out, std::move(e));
-      std::unique_lock<std::mutex> guard{state_->lock};
-      state_->done = true;
-      state_->signaled.notify_all();
+      state_->done.exchange(true);
+      --state_->nested; // reverses blocking_submit_fn::fn
     }
   };
   struct on_done_impl {
@@ -8296,10 +8302,10 @@ struct blocking_submit_fn {
     (requires Receiver<Out>) //
         void
         operator()(Out out) const {
+      auto protected_scope = protect_stack{state_};
       set_done(out);
-      std::unique_lock<std::mutex> guard{state_->lock};
-      state_->done = true;
-      state_->signaled.notify_all();
+      state_->done.exchange(true);
+      --state_->nested; // reverses blocking_submit_fn::fn
     }
   };
 
@@ -8347,11 +8353,13 @@ struct blocking_submit_fn {
 
       auto make = receiver_impl<std::decay_t<In>>{};
       auto submit = submit_impl<In>{};
+      ++state.nested; // reversed by on_done_impl and on_error_impl
       submit((In &&) in, make(&state, std::move(args_)));
 
       std::unique_lock<std::mutex> guard{state.lock};
       state.signaled.wait(
-          guard, [&] { return state.done && state.nested.load() == 0; });
+          guard, [&] { return state.done.load() && state.nested.load() == 0; });
+      while (!state.notified.load()) {}
     }
   };
 
