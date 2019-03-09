@@ -31,6 +31,22 @@ matrix:
     #   os: osx
     #   compiler: clang
 
+    - os: osx
+      osx_image: xcode10.1
+      env:
+        - GCC_VERSION=8
+        - BUILD_TYPE=Debug
+        - CPP=17
+        - BREW_INSTALL_CXX="brew install gcc"
+
+    - os: osx
+      osx_image: xcode10.1
+      env:
+        - GCC_VERSION=8
+        - BUILD_TYPE=Release
+        - CPP=17
+        - BREW_INSTALL_CXX="brew install gcc"
+
     # clang 5 C++11/14/1z Debug/Release libc++, 11 Debug libstdc++
     - env: CLANG_VERSION=6.0 BUILD_TYPE=Debug CPP=14 LIBCXX=On
       os: linux
@@ -150,8 +166,9 @@ before_install:
   - |
     if [ "$TRAVIS_OS_NAME" == "osx" ]; then
       brew update
-      brew install gnu-sed --with-default-names
-      brew install gnu-which --with-default-names
+      brew install gnu-sed
+      brew install gnu-which
+      eval "${BREW_INSTALL_CXX}"
     fi
   - |
     if [ "${TRAVIS_OS_NAME}" == "linux" ]; then
