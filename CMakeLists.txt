@@ -120,7 +120,7 @@ install(TARGETS pushmi EXPORT pushmi-project)
 install(EXPORT pushmi-project DESTINATION pushmi-project)
 
 add_subdirectory(examples)
-# add_subdirectory(benchmarks)
+add_subdirectory(benchmarks)
 
 enable_testing()
 
